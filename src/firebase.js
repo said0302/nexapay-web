@@ -1,7 +1,13 @@
+// 1. IMPORT INTI FIREBASE
 import { initializeApp } from "firebase/app";
+
+// 2. IMPORT DATABASE (FIRESTORE)
 import { getFirestore } from "firebase/firestore";
 
-// TODO: GANTI KODE DI BAWAH INI DENGAN MILIKMU DARI HALAMAN FIREBASE TADI!
+// 3. IMPORT AUTHENTICATION (LOGIN) - Ini yang tadi terlewat!
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
+
+// --- GANTI KODE DI BAWAH INI DENGAN MILIKMU ---
 const firebaseConfig = {
   apiKey: "AIzaSyDbN4sJLGyYTb49nljeb3T_CvA1gfor7K0",
   authDomain: "catatan-keuangan-dc804.firebaseapp.com",
@@ -10,13 +16,14 @@ const firebaseConfig = {
   messagingSenderId: "465764601121",
   appId: "1:465764601121:web:2318f385166660a29e8260",
 };
+// ----------------------------------------------
 
-// Menyalakan Firebase
+// Menyalakan Mesin Firebase
 const app = initializeApp(firebaseConfig);
 
-// Menyalakan fitur Database (Firestore)
+// Menyalakan Fitur Database
 export const db = getFirestore(app);
 
-// --- TAMBAHKAN 2 BARIS INI DI PALING BAWAH ---
+// Menyalakan Fitur Login Google
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
