@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// --- IMPORT FIREBASE ---
+// --- IMPORT FIREBASE DITAMBAH getDoc dan setDoc ---
 import {
   collection,
   onSnapshot,
@@ -36,6 +36,8 @@ import {
   query,
   orderBy,
   where,
+  getDoc,
+  setDoc,
 } from "firebase/firestore";
 import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth, googleProvider } from "./firebase";
@@ -149,7 +151,6 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [historySort, setHistorySort] = useState("newest");
 
-  // --- PERBAIKAN: KATEGORI DEFAULT DIPERBANYAK ---
   const defaultCategories = [
     "Makanan & Minuman",
     "Kebutuhan Rumah",
@@ -191,7 +192,7 @@ function App() {
     "Desember",
   ];
 
-  const [categories, setCategories] = useState(defaultCategories);
+  const [categories, setCategories] = useState(defaultCategories); // Dikosongkan dari localStorage
   const [newCategoryName, setNewCategoryName] = useState("");
   const [manualData, setManualData] = useState({
     type: "expense",
@@ -209,28 +210,25 @@ function App() {
     return () => unsubscribeAuth();
   }, []);
 
-  // --- PERBAIKAN: MEMISAHKAN KATEGORI BERDASARKAN AKUN LOGIN ---
+  // --- PERBAIKAN: MENGAMBIL KATEGORI DARI FIREBASE CLOUD ---
   useEffect(() => {
-    if (currentUser) {
-      const savedCats = localStorage.getItem(
-        `nexapay_categories_${currentUser.uid}`,
-      );
-      if (savedCats) {
-        setCategories(JSON.parse(savedCats));
-      } else {
-        setCategories(defaultCategories); // Jika akun baru, beri default
-      }
-    }
-  }, [currentUser]);
+    const fetchUserData = async () => {
+      if (currentUser) {
+        const userRef = doc(db, "users", currentUser.uid);
+        const userSnap = await getDoc(userRef);
 
-  useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem(
-        `nexapay_categories_${currentUser.uid}`,
-        JSON.stringify(categories),
-      );
-    }
-  }, [categories, currentUser]);
+        if (userSnap.exists()) {
+          // Jika user sudah punya data kategori di Cloud, pakai yang itu
+          setCategories(userSnap.data().categories || defaultCategories);
+        } else {
+          // Jika akun baru, buatkan brankas di Cloud dengan kategori default
+          await setDoc(userRef, { categories: defaultCategories });
+          setCategories(defaultCategories);
+        }
+      }
+    };
+    fetchUserData();
+  }, [currentUser]);
   // -------------------------------------------------------------
 
   useEffect(() => {
@@ -262,7 +260,7 @@ function App() {
     if (window.confirm("Yakin ingin keluar?")) {
       await signOut(auth);
       setTransactions([]);
-      setCategories(defaultCategories); // Reset tampilan kategori ke default saat logout
+      setCategories(defaultCategories); // Reset ke default di layar
     }
   };
 
@@ -645,7 +643,7 @@ function App() {
       store: manualData.type === "income" ? "Pemasukan" : "Pengeluaran Manual",
       date: formattedDate,
       amount: nominal,
-      category: manualData.category, // Perbaikan: Gunakan kategori yang dipilih
+      category: manualData.category,
       icon: manualData.type === "income" ? "💵" : "✍️",
       items: [
         {
@@ -665,15 +663,25 @@ function App() {
     });
   };
 
-  const handleAddCategory = () => {
+  // --- PERBAIKAN: SIMPAN TAMBAH KATEGORI KE CLOUD ---
+  const handleAddCategory = async () => {
     if (newCategoryName.trim() === "") return;
     if (categories.includes(newCategoryName.trim()))
       return alert("Kategori sudah ada!");
-    setCategories([...categories, newCategoryName.trim()]);
+
+    const updatedCategories = [...categories, newCategoryName.trim()];
+    setCategories(updatedCategories);
     setNewCategoryName("");
+
+    if (currentUser) {
+      await updateDoc(doc(db, "users", currentUser.uid), {
+        categories: updatedCategories,
+      });
+    }
   };
 
-  const handleDeleteCategory = (catToDelete) => {
+  // --- PERBAIKAN: SIMPAN HAPUS KATEGORI KE CLOUD ---
+  const handleDeleteCategory = async (catToDelete) => {
     if (catToDelete === "Lainnya")
       return alert("Kategori 'Lainnya' tidak bisa dihapus.");
     if (
@@ -681,7 +689,15 @@ function App() {
         `Hapus kategori "${catToDelete}"?\nTransaksi lama dengan kategori ini akan otomatis jadi 'Lainnya'.`,
       )
     ) {
-      setCategories(categories.filter((cat) => cat !== catToDelete));
+      const updatedCategories = categories.filter((cat) => cat !== catToDelete);
+      setCategories(updatedCategories);
+
+      if (currentUser) {
+        await updateDoc(doc(db, "users", currentUser.uid), {
+          categories: updatedCategories,
+        });
+      }
+
       transactions.forEach(async (tx) => {
         let needsUpdate = false;
         let updatedItems = tx.items?.map((item) => {
@@ -1149,7 +1165,7 @@ function App() {
               </div>
             )}
 
-            {/* --- MENU RIWAYAT DENGAN FITUR PENCARIAN & SORTING --- */}
+            {/* --- MENU RIWAYAT --- */}
             {activeMenu === "history" && (
               <div className="animate-in fade-in duration-500 space-y-4">
                 <div className="flex gap-2 mb-6">
