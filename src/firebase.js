@@ -16,3 +16,7 @@ const app = initializeApp(firebaseConfig);
 
 // Menyalakan fitur Database (Firestore)
 export const db = getFirestore(app);
+
+// --- TAMBAHKAN 2 BARIS INI DI PALING BAWAH ---
+export const auth = getAuth(app);
+export const googleProvider = new GoogleAuthProvider();

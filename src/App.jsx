@@ -21,7 +21,6 @@ import {
   Trash2,
   Tags,
   CalendarDays,
-  TrendingUp,
   Database,
 } from "lucide-react";
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -36,17 +35,18 @@ import {
   deleteDoc,
   query,
   orderBy,
+  where,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
+import { db, auth, googleProvider } from "./firebase";
 
-// --- KOMPONEN GRAFIK GARIS (LINE/AREA CHART) SUPER ELEGAN ---
+// --- KOMPONEN GRAFIK GARIS ---
 const LineChart = ({ data, color = "#3B82F6" }) => {
   if (!data || data.length === 0) return null;
-
   const maxVal = Math.max(...data.map((d) => d.val), 1);
-  const height = 100;
-  const width = 300;
-  const paddingY = 15;
+  const height = 100,
+    width = 300,
+    paddingY = 15;
   const chartHeight = height - paddingY * 2;
 
   const points = data.map((d, i) => {
@@ -69,7 +69,6 @@ const LineChart = ({ data, color = "#3B82F6" }) => {
 
   return (
     <div className="relative w-full h-32 sm:h-44 mt-4 mb-8">
-      {/* Gambar SVG Area Gunung */}
       <svg
         viewBox={`0 0 ${width} ${height}`}
         className="absolute inset-0 w-full h-full overflow-visible"
@@ -102,8 +101,6 @@ const LineChart = ({ data, color = "#3B82F6" }) => {
           className="drop-shadow-md transition-all duration-700 ease-in-out"
         />
       </svg>
-
-      {/* Titik Point Interaktif */}
       {points.map((p, i) => (
         <div
           key={i}
@@ -114,14 +111,11 @@ const LineChart = ({ data, color = "#3B82F6" }) => {
             className="w-2.5 h-2.5 bg-white border-[2.5px] border-solid rounded-full transition-transform group-hover:scale-150 shadow-sm"
             style={{ borderColor: color }}
           ></div>
-          {/* Tooltip Hover/Klik */}
           <div className="opacity-0 group-hover:opacity-100 absolute bottom-full mb-1 bg-gray-900 text-white text-[10px] font-bold px-2 py-1 rounded shadow-lg transition-opacity whitespace-nowrap pointer-events-none">
             Rp {(p.val / 1000).toLocaleString("id-ID")}K
           </div>
         </div>
       ))}
-
-      {/* Label X-Axis (Hari/Bulan/Tahun) */}
       {points.map((p, i) => (
         <div
           key={`label-${i}`}
@@ -136,17 +130,18 @@ const LineChart = ({ data, color = "#3B82F6" }) => {
 };
 
 function App() {
+  // --- STATE USER LOGIN ---
+  const [currentUser, setCurrentUser] = useState(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+
   const [activeMenu, setActiveMenu] = useState("home");
   const [chartFilter, setChartFilter] = useState("Mingguan");
-
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
-
   const [showActionSheet, setShowActionSheet] = useState(false);
   const [showManualInput, setShowManualInput] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
-
   const [selectedTransaction, setSelectedTransaction] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -195,25 +190,37 @@ function App() {
   });
 
   const [newCategoryName, setNewCategoryName] = useState("");
-
-  useEffect(() => {
-    localStorage.setItem("nexapay_categories", JSON.stringify(categories));
-  }, [categories]);
-
   const [manualData, setManualData] = useState({
     type: "expense",
     amount: "",
     store: "",
     category: categories[0],
   });
-
   const [transactions, setTransactions] = useState([]);
 
+  // Mengecek apakah user sudah login saat web pertama kali dibuka
   useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      setIsAuthChecking(false);
+    });
+    return () => unsubscribeAuth();
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("nexapay_categories", JSON.stringify(categories));
+  }, [categories]);
+
+  // Menarik data transaksi HANYA MILIK USER YANG LOGIN
+  useEffect(() => {
+    if (!currentUser) return; // Jangan tarik data kalau belum login
+
     const q = query(
       collection(db, "transactions"),
+      where("userId", "==", currentUser.uid), // FILTER SAKTI!
       orderBy("timestamp", "desc"),
     );
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const txData = snapshot.docs.map((doc) => ({
         ...doc.data(),
@@ -222,13 +229,26 @@ function App() {
       setTransactions(txData);
     });
     return () => unsubscribe();
-  }, []);
+  }, [currentUser]);
 
-  const getValidDate = (tx) => {
-    return tx.timestamp
-      ? new Date(tx.timestamp)
-      : new Date(tx.date.replace(",", ""));
+  // --- FUNGSI LOGIN & LOGOUT ---
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      alert("Gagal login dengan Google: " + error.message);
+    }
   };
+
+  const handleLogout = async () => {
+    if (window.confirm("Yakin ingin keluar?")) {
+      await signOut(auth);
+      setTransactions([]); // Kosongkan data di layar saat logout
+    }
+  };
+
+  const getValidDate = (tx) =>
+    tx.timestamp ? new Date(tx.timestamp) : new Date(tx.date.replace(",", ""));
 
   const availableYears = Array.from(
     new Set([
@@ -254,11 +274,9 @@ function App() {
   const now = new Date();
   const expenseTransactions = transactions.filter((t) => t.type === "expense");
 
-  // --- LOGIKA MINI CHART BERANDA (Total, BUKAN Rata-rata) ---
   const getHomeChartData = () => {
     let data = [];
-    let total = 0; // Menggunakan Total
-
+    let total = 0;
     if (homeChartFilter === "Mingguan") {
       data = [
         { label: "Sen", val: 0 },
@@ -272,8 +290,10 @@ function App() {
       expenseTransactions.forEach((tx) => {
         const txDate = getValidDate(tx);
         const diffTime = Math.abs(now - txDate);
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        if (diffDays <= 7 && !isNaN(txDate)) {
+        if (
+          Math.ceil(diffTime / (1000 * 60 * 60 * 24)) <= 7 &&
+          !isNaN(txDate)
+        ) {
           let dayIdx = txDate.getDay() - 1;
           if (dayIdx === -1) dayIdx = 6;
           data[dayIdx].val += Math.abs(tx.amount);
@@ -332,11 +352,8 @@ function App() {
     if (t.type !== "expense") return false;
     const txDate = getValidDate(t);
     if (isNaN(txDate)) return false;
-
     if (chartFilter === "Mingguan") {
-      const diffTime = Math.abs(now - txDate);
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      return diffDays <= 7;
+      return Math.ceil(Math.abs(now - txDate) / (1000 * 60 * 60 * 24)) <= 7;
     } else if (chartFilter === "Bulanan") {
       return (
         txDate.getFullYear() === selectedYear &&
@@ -354,19 +371,19 @@ function App() {
     (acc, curr) => acc + Math.abs(curr.amount),
     0,
   );
-
   const categoryData = {};
   filteredExpenseTransactions.forEach((tx) => {
     if (tx.items && tx.items.length > 0) {
       tx.items.forEach((item) => {
-        let cat = item.category || "Lainnya";
-        if (!categories.includes(cat)) cat = "Lainnya";
-        const itemTotal = (Number(item.qty) || 1) * (Number(item.price) || 0);
-        categoryData[cat] = (categoryData[cat] || 0) + itemTotal;
+        let cat = categories.includes(item.category)
+          ? item.category
+          : "Lainnya";
+        categoryData[cat] =
+          (categoryData[cat] || 0) +
+          (Number(item.qty) || 1) * (Number(item.price) || 0);
       });
     } else {
-      let cat = tx.category || "Lainnya";
-      if (!categories.includes(cat)) cat = "Lainnya";
+      let cat = categories.includes(tx.category) ? tx.category : "Lainnya";
       categoryData[cat] = (categoryData[cat] || 0) + Math.abs(tx.amount);
     }
   });
@@ -392,8 +409,8 @@ function App() {
   let cumulativePercent = 0;
   const pieGradientStops = categoryList
     .map((cat) => {
-      const start = cumulativePercent;
-      const end = cumulativePercent + parseFloat(cat.percentage);
+      const start = cumulativePercent,
+        end = cumulativePercent + parseFloat(cat.percentage);
       cumulativePercent = end;
       return `${cat.color} ${start}% ${end}%`;
     })
@@ -437,19 +454,16 @@ function App() {
 
     filteredExpenseTransactions.forEach((tx) => {
       const txDate = getValidDate(tx);
-      const amt = Math.abs(tx.amount);
-      if (chartFilter === "Mingguan") {
-        weekly[txDate.getDay()].val += amt;
-      } else if (chartFilter === "Bulanan") {
-        const dayOfMonth = txDate.getDate();
-        const weekIndex = Math.min(Math.floor((dayOfMonth - 1) / 7), 3);
-        monthly[weekIndex].val += amt;
-      } else if (chartFilter === "Tahunan") {
-        yearly[txDate.getMonth()].val += amt;
-      } else if (chartFilter === "Semua") {
-        const year = txDate.getFullYear().toString();
-        allTime[year] = (allTime[year] || 0) + amt;
-      }
+      if (chartFilter === "Mingguan")
+        weekly[txDate.getDay()].val += Math.abs(tx.amount);
+      else if (chartFilter === "Bulanan")
+        monthly[Math.min(Math.floor((txDate.getDate() - 1) / 7), 3)].val +=
+          Math.abs(tx.amount);
+      else if (chartFilter === "Tahunan")
+        yearly[txDate.getMonth()].val += Math.abs(tx.amount);
+      else if (chartFilter === "Semua")
+        allTime[txDate.getFullYear().toString()] =
+          (allTime[txDate.getFullYear().toString()] || 0) + Math.abs(tx.amount);
     });
 
     if (chartFilter === "Mingguan")
@@ -464,25 +478,20 @@ function App() {
       ];
     if (chartFilter === "Bulanan") return monthly;
     if (chartFilter === "Tahunan") return yearly;
-
     if (chartFilter === "Semua") {
-      const sortedYears = Object.keys(allTime).sort(
-        (a, b) => Number(a) - Number(b),
-      );
-      let allTimeArr = sortedYears.map((y) => ({ label: y, val: allTime[y] }));
-
+      let allTimeArr = Object.keys(allTime)
+        .sort((a, b) => Number(a) - Number(b))
+        .map((y) => ({ label: y, val: allTime[y] }));
       if (allTimeArr.length === 0)
         allTimeArr = [{ label: new Date().getFullYear().toString(), val: 0 }];
-      if (allTimeArr.length === 1) {
+      if (allTimeArr.length === 1)
         allTimeArr = [
           { label: (Number(allTimeArr[0].label) - 1).toString(), val: 0 },
           ...allTimeArr,
         ];
-      }
       return allTimeArr;
     }
   };
-
   const currentAnalysisChartView = generateAnalysisChartData();
 
   const handleImageSelect = (event) => {
@@ -495,7 +504,7 @@ function App() {
   };
 
   const handleProcessAI = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || !currentUser) return;
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
       alert("API Key Gemini belum dipasang di .env");
@@ -508,28 +517,11 @@ function App() {
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
       const reader = new FileReader();
       reader.readAsDataURL(selectedFile);
-
       reader.onloadend = async () => {
         try {
           const base64Data = reader.result.split(",")[1];
           const allowedCats = categories.join(", ");
-
-          const prompt = `Kamu adalah sistem akuntansi. Baca struk ini, kembalikan HANYA JSON persis ini:
-          {
-            "store": "Nama Toko", 
-            "date": "Tanggal struk (format: DD MMM YYYY, HH:mm)",
-            "isoDate": "Tanggal struk format standar YYYY-MM-DDTHH:mm:ss",
-            "amount": -15000, 
-            "category": "Tebak kategori toko", 
-            "items": [
-              { 
-                "name": "Nama Barang", 
-                "qty": 1, 
-                "price": 15000, 
-                "category": "WAJIB PILIH DARI: ${allowedCats}. Pilih paling cocok. Jika tidak ada, tulis 'Lainnya'" 
-              }
-            ]
-          }`;
+          const prompt = `Kamu adalah sistem akuntansi. Baca struk ini, kembalikan HANYA JSON persis ini: { "store": "Nama Toko", "date": "DD MMM YYYY, HH:mm", "isoDate": "YYYY-MM-DDTHH:mm:ss", "amount": -15000, "category": "Tebak kategori", "items": [ { "name": "Barang", "qty": 1, "price": 15000, "category": "WAJIB PILIH DARI: ${allowedCats}" } ] }`;
 
           const result = await model.generateContent([
             prompt,
@@ -543,18 +535,12 @@ function App() {
           const extractedData = JSON.parse(responseText);
 
           let txTimestamp = Date.now();
-          if (extractedData.isoDate) {
-            const parsed = new Date(extractedData.isoDate);
-            if (!isNaN(parsed.getTime())) txTimestamp = parsed.getTime();
-          } else if (extractedData.date) {
-            const parsedFallback = new Date(
-              extractedData.date.replace(",", ""),
-            );
-            if (!isNaN(parsedFallback.getTime()))
-              txTimestamp = parsedFallback.getTime();
-          }
+          if (extractedData.isoDate)
+            txTimestamp =
+              new Date(extractedData.isoDate).getTime() || Date.now();
 
           const newTransaction = {
+            userId: currentUser.uid, // Simpan UID agar terikat dengan akun
             timestamp: txTimestamp,
             type: "expense",
             store: extractedData.store || "Toko",
@@ -569,9 +555,7 @@ function App() {
                 : "Lainnya",
             })),
           };
-
           await addDoc(collection(db, "transactions"), newTransaction);
-
           setImagePreview(null);
           setSelectedFile(null);
           setIsProcessing(false);
@@ -587,8 +571,8 @@ function App() {
   };
 
   const handleSaveManual = async () => {
-    if (!manualData.amount || !manualData.store)
-      return alert("Isi nominal dan nama/keterangan!");
+    if (!manualData.amount || !manualData.store || !currentUser)
+      return alert("Data tidak lengkap / belum login");
     const nominal =
       manualData.type === "expense"
         ? -Math.abs(Number(manualData.amount))
@@ -603,7 +587,8 @@ function App() {
       })
       .replace(/\./g, ":");
 
-    const newTransaction = {
+    await addDoc(collection(db, "transactions"), {
+      userId: currentUser.uid, // Simpan UID pengguna
       timestamp: Date.now(),
       type: manualData.type,
       store: manualData.type === "income" ? "Pemasukan" : "Pengeluaran Manual",
@@ -619,9 +604,7 @@ function App() {
           category: manualData.category,
         },
       ],
-    };
-
-    await addDoc(collection(db, "transactions"), newTransaction);
+    });
     setShowManualInput(false);
     setManualData({
       type: "expense",
@@ -632,14 +615,9 @@ function App() {
   };
 
   const handleInjectDummyData = async () => {
-    if (
-      !window.confirm(
-        "Yakin ingin menyuntikkan 15 data uji coba ke Database Firebase?",
-      )
-    )
+    if (!currentUser || !window.confirm("Suntik 15 data uji coba ke akun ini?"))
       return;
     setIsProcessing(true);
-
     const makeDate = (y, m, d) => {
       const dt = new Date(y, m - 1, d, 10, 30);
       return {
@@ -655,7 +633,6 @@ function App() {
           .replace(/\./g, ":"),
       };
     };
-
     const dummies = [
       {
         ...makeDate(2026, 2, 20),
@@ -766,10 +743,10 @@ function App() {
         item: "Ganti Oli & Servis Rutin",
       },
     ];
-
     try {
       for (let data of dummies) {
-        const payload = {
+        await addDoc(collection(db, "transactions"), {
+          userId: currentUser.uid, // Wajib disertakan!
           timestamp: data.timestamp,
           type: data.type,
           store: data.store,
@@ -785,10 +762,9 @@ function App() {
               category: data.cat,
             },
           ],
-        };
-        await addDoc(collection(db, "transactions"), payload);
+        });
       }
-      alert("Suntik Data Sukses! Cek Grafik Analisis kamu sekarang.");
+      alert("Suntik Data Sukses!");
     } catch (e) {
       alert("Gagal menyuntikkan data.");
     }
@@ -802,15 +778,10 @@ function App() {
     setCategories([...categories, newCategoryName.trim()]);
     setNewCategoryName("");
   };
-
   const handleDeleteCategory = (catToDelete) => {
     if (catToDelete === "Lainnya")
       return alert("Kategori 'Lainnya' tidak bisa dihapus.");
-    if (
-      window.confirm(
-        `Hapus kategori "${catToDelete}"?\n(Semua barang terkait akan otomatis dipindah ke 'Lainnya')`,
-      )
-    ) {
+    if (window.confirm(`Hapus kategori "${catToDelete}"?`)) {
       setCategories(categories.filter((cat) => cat !== catToDelete));
       transactions.forEach(async (tx) => {
         let needsUpdate = false;
@@ -821,25 +792,21 @@ function App() {
           }
           return item;
         });
-        if (needsUpdate) {
-          const txRef = doc(db, "transactions", tx.id);
-          await updateDoc(txRef, { items: updatedItems });
-        }
+        if (needsUpdate)
+          await updateDoc(doc(db, "transactions", tx.id), {
+            items: updatedItems,
+          });
       });
     }
   };
 
-  // FUNGSI MEMULAI EDIT (MENGAMBIL DATA UNTUK MODAL)
   const startEditing = () => {
     const dataToEdit = JSON.parse(JSON.stringify(selectedTransaction));
-    // Validasi timestamp lama agar format jam tidak error
-    if (!dataToEdit.timestamp) {
+    if (!dataToEdit.timestamp)
       dataToEdit.timestamp = getValidDate(dataToEdit).getTime();
-    }
     setEditData(dataToEdit);
     setIsEditing(true);
   };
-
   const handleItemChange = (index, field, value) => {
     const updatedItems = [...editData.items];
     updatedItems[index][field] = value;
@@ -854,7 +821,6 @@ function App() {
         editData.type === "income" ? Math.abs(newTotal) : -Math.abs(newTotal),
     });
   };
-
   const handleDeleteItem = (index) => {
     const updatedItems = editData.items.filter((_, i) => i !== index);
     const newTotal = updatedItems.reduce(
@@ -868,34 +834,25 @@ function App() {
         editData.type === "income" ? Math.abs(newTotal) : -Math.abs(newTotal),
     });
   };
-
   const saveEdit = async () => {
-    const txRef = doc(db, "transactions", editData.id);
-    await updateDoc(txRef, editData);
+    await updateDoc(doc(db, "transactions", editData.id), editData);
     setSelectedTransaction(editData);
     setIsEditing(false);
   };
-
   const handleDelete = async (id) => {
-    if (window.confirm("Yakin ingin menghapus seluruh transaksi ini?")) {
+    if (window.confirm("Yakin hapus?")) {
       await deleteDoc(doc(db, "transactions", id));
       setSelectedTransaction(null);
     }
   };
-
   const handleResetData = () => {
-    if (
-      window.confirm(
-        "PERINGATAN! Yakin ingin menghapus SEMUA riwayat transaksi dari Database Server?",
-      )
-    ) {
-      transactions.forEach(async (tx) => {
-        await deleteDoc(doc(db, "transactions", tx.id));
-      });
-      alert("Proses penghapusan database selesai!");
+    if (window.confirm("PERINGATAN! Hapus SEMUA riwayat milik akun ini?")) {
+      transactions.forEach(
+        async (tx) => await deleteDoc(doc(db, "transactions", tx.id)),
+      );
+      alert("Berhasil di-reset!");
     }
   };
-
   const closePopup = () => {
     setSelectedTransaction(null);
     setIsEditing(false);
@@ -948,6 +905,57 @@ function App() {
     </div>
   );
 
+  // --- HALAMAN LOGIN/SPLASH SCREEN JIKA BELUM LOGIN ---
+  if (isAuthChecking)
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center font-bold text-gray-500">
+        Memuat Aplikasi...
+      </div>
+    );
+
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-[#F2F2F7] flex justify-center items-center font-sans p-6">
+        <div className="w-full max-w-md bg-white p-8 rounded-[2.5rem] shadow-2xl text-center">
+          <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-xl mx-auto mb-6">
+            <ScanLine size={40} />
+          </div>
+          <h1 className="text-3xl font-extrabold text-gray-900 mb-2">
+            NexaPay.
+          </h1>
+          <p className="text-gray-500 mb-10 font-medium text-sm">
+            Aplikasi Keuangan Pintar Berbasis AI
+          </p>
+          <button
+            onClick={handleLogin}
+            className="w-full bg-gray-900 text-white p-4 rounded-2xl flex items-center justify-center gap-3 shadow-lg hover:bg-gray-800 transition-transform active:scale-95"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24">
+              <path
+                fill="currentColor"
+                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+              />
+              <path
+                fill="#34A853"
+                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+              />
+              <path
+                fill="#EA4335"
+                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+              />
+            </svg>
+            <span className="font-bold">Masuk dengan Google</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- HALAMAN UTAMA APLIKASI ---
   return (
     <div className="min-h-screen bg-[#F2F2F7] md:bg-gray-100 p-0 md:p-8 flex justify-center items-center font-sans relative overflow-hidden">
       <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-blue-400/30 rounded-full blur-[100px] pointer-events-none"></div>
@@ -1012,7 +1020,7 @@ function App() {
           <header className="px-6 md:px-10 pt-14 md:pt-10 pb-4 flex justify-between items-center z-10">
             <div>
               <p className="text-gray-500 text-sm font-medium mb-0.5 md:hidden">
-                Halo, Selamat Pagi
+                Halo, {currentUser?.displayName?.split(" ")[0]}
               </p>
               <h2 className="text-3xl font-bold text-gray-900 tracking-tight">
                 {activeMenu === "home"
@@ -1021,12 +1029,17 @@ function App() {
                     ? "Analisis"
                     : activeMenu === "settings"
                       ? "Pengaturan"
-                      : "Riwayat Belanja"}
+                      : "Riwayat"}
               </h2>
             </div>
-            <button className="w-11 h-11 rounded-full bg-white/60 border border-white/60 backdrop-blur-xl flex items-center justify-center text-gray-700 shadow-sm hover:bg-white transition-colors">
-              <Bell size={20} />
-            </button>
+            <img
+              src={
+                currentUser?.photoURL ||
+                "https://api.dicebear.com/7.x/avataaars/svg?seed=Felix"
+              }
+              className="w-11 h-11 rounded-full border-2 border-white shadow-sm"
+              alt="Profile"
+            />
           </header>
 
           <div className="flex-1 overflow-y-auto px-6 md:px-10 pb-32 md:pb-10 no-scrollbar z-10">
@@ -1047,7 +1060,6 @@ function App() {
                       </h2>
                     </div>
                   </div>
-
                   <div className="relative p-6 md:p-8 rounded-[1.5rem] border border-white/40 bg-white/40 backdrop-blur-2xl shadow-lg overflow-hidden group">
                     <div className="absolute inset-0 bg-gradient-to-br from-rose-500/90 to-red-600/90 mix-blend-multiply"></div>
                     <div className="relative z-10 text-white flex flex-col justify-center">
@@ -1062,8 +1074,6 @@ function App() {
                       </h2>
                     </div>
                   </div>
-
-                  {/* KARTU STATISTIK BERANDA MENGGUNAKAN TOTAL */}
                   <div className="bg-white/60 border border-white/60 backdrop-blur-xl rounded-[1.5rem] p-5 shadow-sm mt-1">
                     <div className="flex justify-between items-center mb-4">
                       <h3 className="text-base font-bold text-gray-900">
@@ -1079,7 +1089,6 @@ function App() {
                         <option value="Tahunan">Tahun Ini</option>
                       </select>
                     </div>
-
                     <div className="mb-2">
                       <p className="text-xs font-semibold text-gray-500 mb-0.5">
                         {homeChartFilter === "Mingguan"
@@ -1092,11 +1101,9 @@ function App() {
                         Rp {homeTotal.toLocaleString("id-ID")}
                       </h4>
                     </div>
-
                     <LineChart data={homeChartData} color="#3B82F6" />
                   </div>
                 </div>
-
                 <div className="bg-white/50 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 shadow-sm">
                   <div className="flex justify-between items-end mb-6">
                     <h3 className="text-xl font-bold text-gray-900 tracking-tight">
@@ -1145,7 +1152,6 @@ function App() {
                     </h3>
                   </div>
                 </div>
-
                 <div className="bg-white/70 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 shadow-sm flex flex-col relative pt-8 pb-4">
                   <div className="flex p-1 bg-gray-100/80 rounded-xl mb-4 mx-auto w-full max-w-lg">
                     {["Mingguan", "Bulanan", "Tahunan", "Semua"].map(
@@ -1160,7 +1166,6 @@ function App() {
                       ),
                     )}
                   </div>
-
                   {chartFilter !== "Mingguan" && chartFilter !== "Semua" && (
                     <div className="flex justify-center gap-2 mb-2 animate-in fade-in">
                       {chartFilter === "Bulanan" && (
@@ -1193,15 +1198,12 @@ function App() {
                       </select>
                     </div>
                   )}
-
                   <LineChart data={currentAnalysisChartView} color="#8B5CF6" />
                 </div>
-
                 <div className="bg-white/70 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 md:p-8 shadow-sm">
                   <h3 className="text-lg font-bold text-gray-900 mb-6 text-center">
                     Distribusi Kategori
                   </h3>
-
                   {categoryList.length > 0 ? (
                     <div className="flex flex-col md:flex-row items-center gap-8 md:gap-12">
                       <div
@@ -1217,7 +1219,6 @@ function App() {
                           </p>
                         </div>
                       </div>
-
                       <div className="w-full flex-1 space-y-3">
                         {categoryList.map((cat, idx) => (
                           <div
@@ -1276,16 +1277,20 @@ function App() {
                 <div className="bg-white/60 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 shadow-sm flex items-center gap-6">
                   <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center border-4 border-white shadow-sm overflow-hidden shrink-0">
                     <img
-                      src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix"
+                      src={
+                        currentUser?.photoURL ||
+                        "https://api.dicebear.com/7.x/avataaars/svg?seed=Felix"
+                      }
                       alt="User"
+                      referrerPolicy="no-referrer"
                     />
                   </div>
                   <div className="min-w-0">
                     <h3 className="text-2xl font-bold text-gray-900 truncate">
-                      Admin Nexa
+                      {currentUser?.displayName || "Pengguna"}
                     </h3>
-                    <p className="text-gray-500 truncate">
-                      Terhubung ke Firebase 🔥
+                    <p className="text-gray-500 truncate text-sm">
+                      {currentUser?.email}
                     </p>
                   </div>
                 </div>
@@ -1299,7 +1304,6 @@ function App() {
                       Kategori Belanja
                     </h3>
                   </div>
-
                   <div className="flex flex-wrap gap-2 mb-5">
                     {categories.map((cat, idx) => (
                       <div
@@ -1318,7 +1322,6 @@ function App() {
                       </div>
                     ))}
                   </div>
-
                   <div className="flex gap-2">
                     <input
                       type="text"
@@ -1348,7 +1351,6 @@ function App() {
                     </div>
                     <ChevronRight size={18} className="text-gray-400" />
                   </button>
-
                   <button
                     onClick={handleInjectDummyData}
                     disabled={isProcessing}
@@ -1365,17 +1367,29 @@ function App() {
                       </span>
                     </div>
                   </button>
-
                   <button
                     onClick={handleResetData}
                     className="w-full flex items-center justify-between p-4 hover:bg-red-50 rounded-2xl transition-colors text-left border border-transparent hover:border-red-100 mt-2"
                   >
                     <div className="flex items-center gap-4">
                       <div className="p-2 bg-red-100 text-red-600 rounded-xl">
-                        <LogOut size={20} />
+                        <Trash2 size={20} />
                       </div>
                       <span className="font-semibold text-red-600">
-                        Reset Seluruh Database Server
+                        Hapus Data Akun Ini
+                      </span>
+                    </div>
+                  </button>
+                  <button
+                    onClick={handleLogout}
+                    className="w-full flex items-center justify-between p-4 hover:bg-gray-100 rounded-2xl transition-colors text-left border border-transparent mt-2"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="p-2 bg-gray-200 text-gray-700 rounded-xl">
+                        <LogOut size={20} />
+                      </div>
+                      <span className="font-semibold text-gray-700">
+                        Keluar (Log Out)
                       </span>
                     </div>
                   </button>
@@ -1666,7 +1680,6 @@ function App() {
                 )}
               </div>
 
-              {/* FITUR EDIT TANGGAL ADA DI SINI */}
               <div className="text-center mb-4 mt-2 px-8 flex flex-col items-center">
                 <div
                   className={`w-12 h-12 text-2xl rounded-2xl flex items-center justify-center mx-auto mb-2 ${selectedTransaction.type === "income" ? "bg-green-100" : "bg-gray-100"}`}
@@ -1683,8 +1696,6 @@ function App() {
                       }
                       className="w-full text-center font-bold text-xl bg-gray-50 border border-gray-200 rounded-xl p-1.5 outline-none focus:ring-2 focus:ring-blue-500"
                     />
-
-                    {/* Input kalender bawaan perangkat */}
                     <input
                       type="datetime-local"
                       value={
