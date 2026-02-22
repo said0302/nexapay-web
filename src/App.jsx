@@ -21,7 +21,7 @@ import {
   Trash2,
   Tags,
   CalendarDays,
-  Database,
+  Search,
 } from "lucide-react";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
@@ -130,7 +130,6 @@ const LineChart = ({ data, color = "#3B82F6" }) => {
 };
 
 function App() {
-  // --- STATE USER LOGIN ---
   const [currentUser, setCurrentUser] = useState(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
 
@@ -147,14 +146,21 @@ function App() {
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState(null);
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [historySort, setHistorySort] = useState("newest");
+
+  // --- PERBAIKAN: KATEGORI DEFAULT DIPERBANYAK ---
   const defaultCategories = [
     "Makanan & Minuman",
     "Kebutuhan Rumah",
     "Transportasi",
+    "Tagihan & Cicilan",
     "Elektronik & Sparepart",
     "Pakaian & Kosmetik",
     "Kesehatan",
+    "Pendidikan",
     "Hiburan",
+    "Sedekah & Donasi",
     "Lainnya",
   ];
   const pieColors = [
@@ -168,6 +174,7 @@ function App() {
     "#06B6D4",
     "#64748B",
     "#94A3B8",
+    "#34D399",
   ];
   const monthNames = [
     "Januari",
@@ -184,21 +191,16 @@ function App() {
     "Desember",
   ];
 
-  const [categories, setCategories] = useState(() => {
-    const savedCats = localStorage.getItem("nexapay_categories");
-    return savedCats ? JSON.parse(savedCats) : defaultCategories;
-  });
-
+  const [categories, setCategories] = useState(defaultCategories);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [manualData, setManualData] = useState({
     type: "expense",
     amount: "",
     store: "",
-    category: categories[0],
+    category: "Lainnya",
   });
   const [transactions, setTransactions] = useState([]);
 
-  // Mengecek apakah user sudah login saat web pertama kali dibuka
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
@@ -207,20 +209,37 @@ function App() {
     return () => unsubscribeAuth();
   }, []);
 
+  // --- PERBAIKAN: MEMISAHKAN KATEGORI BERDASARKAN AKUN LOGIN ---
   useEffect(() => {
-    localStorage.setItem("nexapay_categories", JSON.stringify(categories));
-  }, [categories]);
+    if (currentUser) {
+      const savedCats = localStorage.getItem(
+        `nexapay_categories_${currentUser.uid}`,
+      );
+      if (savedCats) {
+        setCategories(JSON.parse(savedCats));
+      } else {
+        setCategories(defaultCategories); // Jika akun baru, beri default
+      }
+    }
+  }, [currentUser]);
 
-  // Menarik data transaksi HANYA MILIK USER YANG LOGIN
   useEffect(() => {
-    if (!currentUser) return; // Jangan tarik data kalau belum login
+    if (currentUser) {
+      localStorage.setItem(
+        `nexapay_categories_${currentUser.uid}`,
+        JSON.stringify(categories),
+      );
+    }
+  }, [categories, currentUser]);
+  // -------------------------------------------------------------
 
+  useEffect(() => {
+    if (!currentUser) return;
     const q = query(
       collection(db, "transactions"),
-      where("userId", "==", currentUser.uid), // FILTER SAKTI!
+      where("userId", "==", currentUser.uid),
       orderBy("timestamp", "desc"),
     );
-
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const txData = snapshot.docs.map((doc) => ({
         ...doc.data(),
@@ -231,7 +250,6 @@ function App() {
     return () => unsubscribe();
   }, [currentUser]);
 
-  // --- FUNGSI LOGIN & LOGOUT ---
   const handleLogin = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
@@ -243,7 +261,8 @@ function App() {
   const handleLogout = async () => {
     if (window.confirm("Yakin ingin keluar?")) {
       await signOut(auth);
-      setTransactions([]); // Kosongkan data di layar saat logout
+      setTransactions([]);
+      setCategories(defaultCategories); // Reset tampilan kategori ke default saat logout
     }
   };
 
@@ -494,6 +513,31 @@ function App() {
   };
   const currentAnalysisChartView = generateAnalysisChartData();
 
+  const sortedAndFilteredHistory = transactions
+    .filter((tx) => {
+      if (!searchQuery) return true;
+      const queryStr = searchQuery.toLowerCase();
+      if (tx.store.toLowerCase().includes(queryStr)) return true;
+      if (tx.category.toLowerCase().includes(queryStr)) return true;
+      if (
+        tx.items &&
+        tx.items.some(
+          (item) =>
+            item.name.toLowerCase().includes(queryStr) ||
+            (item.category && item.category.toLowerCase().includes(queryStr)),
+        )
+      )
+        return true;
+      return false;
+    })
+    .sort((a, b) => {
+      if (historySort === "newest") return b.timestamp - a.timestamp;
+      if (historySort === "oldest") return a.timestamp - b.timestamp;
+      if (historySort === "a-z") return a.store.localeCompare(b.store);
+      if (historySort === "z-a") return b.store.localeCompare(a.store);
+      return 0;
+    });
+
   const handleImageSelect = (event) => {
     const file = event.target.files[0];
     if (file) {
@@ -540,7 +584,7 @@ function App() {
               new Date(extractedData.isoDate).getTime() || Date.now();
 
           const newTransaction = {
-            userId: currentUser.uid, // Simpan UID agar terikat dengan akun
+            userId: currentUser.uid,
             timestamp: txTimestamp,
             type: "expense",
             store: extractedData.store || "Toko",
@@ -555,7 +599,14 @@ function App() {
                 : "Lainnya",
             })),
           };
-          await addDoc(collection(db, "transactions"), newTransaction);
+
+          const docRef = await addDoc(
+            collection(db, "transactions"),
+            newTransaction,
+          );
+          setSelectedTransaction({ ...newTransaction, id: docRef.id });
+          setIsEditing(false);
+
           setImagePreview(null);
           setSelectedFile(null);
           setIsProcessing(false);
@@ -588,13 +639,13 @@ function App() {
       .replace(/\./g, ":");
 
     await addDoc(collection(db, "transactions"), {
-      userId: currentUser.uid, // Simpan UID pengguna
+      userId: currentUser.uid,
       timestamp: Date.now(),
       type: manualData.type,
       store: manualData.type === "income" ? "Pemasukan" : "Pengeluaran Manual",
       date: formattedDate,
       amount: nominal,
-      category: "Lainnya",
+      category: manualData.category, // Perbaikan: Gunakan kategori yang dipilih
       icon: manualData.type === "income" ? "💵" : "✍️",
       items: [
         {
@@ -614,163 +665,6 @@ function App() {
     });
   };
 
-  const handleInjectDummyData = async () => {
-    if (!currentUser || !window.confirm("Suntik 15 data uji coba ke akun ini?"))
-      return;
-    setIsProcessing(true);
-    const makeDate = (y, m, d) => {
-      const dt = new Date(y, m - 1, d, 10, 30);
-      return {
-        timestamp: dt.getTime(),
-        date: dt
-          .toLocaleDateString("id-ID", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-          .replace(/\./g, ":"),
-      };
-    };
-    const dummies = [
-      {
-        ...makeDate(2026, 2, 20),
-        type: "income",
-        store: "Gaji Bulan Ini",
-        amount: 8000000,
-        icon: "💰",
-        cat: "Lainnya",
-        item: "Gaji Utama",
-      },
-      {
-        ...makeDate(2026, 2, 19),
-        type: "expense",
-        store: "SPBU Shell",
-        amount: -150000,
-        icon: "⛽",
-        cat: "Transportasi",
-        item: "Bensin V-Power",
-      },
-      {
-        ...makeDate(2026, 2, 18),
-        type: "expense",
-        store: "KFC Sudirman",
-        amount: -85000,
-        icon: "🍔",
-        cat: "Makanan & Minuman",
-        item: "Super Besar 2",
-      },
-      {
-        ...makeDate(2026, 2, 15),
-        type: "expense",
-        store: "Indomaret",
-        amount: -60000,
-        icon: "🛒",
-        cat: "Kebutuhan Rumah",
-        item: "Sabun Mandi & Odol",
-      },
-      {
-        ...makeDate(2026, 2, 10),
-        type: "expense",
-        store: "Apotek Sehat",
-        amount: -120000,
-        icon: "💊",
-        cat: "Kesehatan",
-        item: "Vitamin & Obat Flu",
-      },
-      {
-        ...makeDate(2026, 1, 25),
-        type: "expense",
-        store: "Shopee",
-        amount: -350000,
-        icon: "👕",
-        cat: "Pakaian & Kosmetik",
-        item: "Kemeja Polos",
-      },
-      {
-        ...makeDate(2026, 1, 15),
-        type: "expense",
-        store: "PLN Mobile",
-        amount: -200000,
-        icon: "💡",
-        cat: "Kebutuhan Rumah",
-        item: "Token Listrik",
-      },
-      {
-        ...makeDate(2026, 1, 5),
-        type: "expense",
-        store: "CGV Cinemas",
-        amount: -100000,
-        icon: "🎟️",
-        cat: "Hiburan",
-        item: "Tiket Bioskop",
-      },
-      {
-        ...makeDate(2026, 1, 1),
-        type: "income",
-        store: "Gaji Bulan Lalu",
-        amount: 8000000,
-        icon: "💰",
-        cat: "Lainnya",
-        item: "Gaji Utama",
-      },
-      {
-        ...makeDate(2025, 12, 20),
-        type: "expense",
-        store: "Steam Games",
-        amount: -150000,
-        icon: "🎮",
-        cat: "Hiburan",
-        item: "Game PC",
-      },
-      {
-        ...makeDate(2025, 11, 11),
-        type: "expense",
-        store: "Tokopedia",
-        amount: -850000,
-        icon: "💻",
-        cat: "Elektronik & Sparepart",
-        item: "Keyboard Mechanical",
-      },
-      {
-        ...makeDate(2025, 10, 5),
-        type: "expense",
-        store: "Bengkel Honda",
-        amount: -250000,
-        icon: "🔧",
-        cat: "Transportasi",
-        item: "Ganti Oli & Servis Rutin",
-      },
-    ];
-    try {
-      for (let data of dummies) {
-        await addDoc(collection(db, "transactions"), {
-          userId: currentUser.uid, // Wajib disertakan!
-          timestamp: data.timestamp,
-          type: data.type,
-          store: data.store,
-          date: data.date,
-          amount: data.amount,
-          category: "Lainnya",
-          icon: data.icon,
-          items: [
-            {
-              name: data.item,
-              qty: 1,
-              price: Math.abs(data.amount),
-              category: data.cat,
-            },
-          ],
-        });
-      }
-      alert("Suntik Data Sukses!");
-    } catch (e) {
-      alert("Gagal menyuntikkan data.");
-    }
-    setIsProcessing(false);
-  };
-
   const handleAddCategory = () => {
     if (newCategoryName.trim() === "") return;
     if (categories.includes(newCategoryName.trim()))
@@ -778,10 +672,15 @@ function App() {
     setCategories([...categories, newCategoryName.trim()]);
     setNewCategoryName("");
   };
+
   const handleDeleteCategory = (catToDelete) => {
     if (catToDelete === "Lainnya")
       return alert("Kategori 'Lainnya' tidak bisa dihapus.");
-    if (window.confirm(`Hapus kategori "${catToDelete}"?`)) {
+    if (
+      window.confirm(
+        `Hapus kategori "${catToDelete}"?\nTransaksi lama dengan kategori ini akan otomatis jadi 'Lainnya'.`,
+      )
+    ) {
       setCategories(categories.filter((cat) => cat !== catToDelete));
       transactions.forEach(async (tx) => {
         let needsUpdate = false;
@@ -834,23 +733,17 @@ function App() {
         editData.type === "income" ? Math.abs(newTotal) : -Math.abs(newTotal),
     });
   };
+
   const saveEdit = async () => {
     await updateDoc(doc(db, "transactions", editData.id), editData);
     setSelectedTransaction(editData);
     setIsEditing(false);
   };
+
   const handleDelete = async (id) => {
     if (window.confirm("Yakin hapus?")) {
       await deleteDoc(doc(db, "transactions", id));
       setSelectedTransaction(null);
-    }
-  };
-  const handleResetData = () => {
-    if (window.confirm("PERINGATAN! Hapus SEMUA riwayat milik akun ini?")) {
-      transactions.forEach(
-        async (tx) => await deleteDoc(doc(db, "transactions", tx.id)),
-      );
-      alert("Berhasil di-reset!");
     }
   };
   const closePopup = () => {
@@ -905,7 +798,6 @@ function App() {
     </div>
   );
 
-  // --- HALAMAN LOGIN/SPLASH SCREEN JIKA BELUM LOGIN ---
   if (isAuthChecking)
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center font-bold text-gray-500">
@@ -955,7 +847,6 @@ function App() {
     );
   }
 
-  // --- HALAMAN UTAMA APLIKASI ---
   return (
     <div className="min-h-screen bg-[#F2F2F7] md:bg-gray-100 p-0 md:p-8 flex justify-center items-center font-sans relative overflow-hidden">
       <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-blue-400/30 rounded-full blur-[100px] pointer-events-none"></div>
@@ -1017,7 +908,7 @@ function App() {
         </aside>
 
         <main className="flex-1 flex flex-col h-full relative overflow-hidden bg-transparent md:bg-white/10">
-          <header className="px-6 md:px-10 pt-14 md:pt-10 pb-4 flex justify-between items-center z-10">
+          <header className="px-6 md:px-10 pt-14 md:pt-10 pb-4 flex justify-between items-center z-10 shrink-0">
             <div>
               <p className="text-gray-500 text-sm font-medium mb-0.5 md:hidden">
                 Halo, {currentUser?.displayName?.split(" ")[0]}
@@ -1029,7 +920,7 @@ function App() {
                     ? "Analisis"
                     : activeMenu === "settings"
                       ? "Pengaturan"
-                      : "Riwayat"}
+                      : "Riwayat Belanja"}
               </h2>
             </div>
             <img
@@ -1104,8 +995,8 @@ function App() {
                     <LineChart data={homeChartData} color="#3B82F6" />
                   </div>
                 </div>
-                <div className="bg-white/50 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 shadow-sm">
-                  <div className="flex justify-between items-end mb-6">
+                <div className="bg-white/50 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 shadow-sm flex flex-col">
+                  <div className="flex justify-between items-end mb-6 shrink-0">
                     <h3 className="text-xl font-bold text-gray-900 tracking-tight">
                       Terbaru
                     </h3>
@@ -1116,14 +1007,14 @@ function App() {
                       Semua <ChevronRight size={16} />
                     </button>
                   </div>
-                  <div>
+                  <div className="flex-1 overflow-y-auto no-scrollbar">
                     {transactions.length === 0 ? (
                       <p className="text-sm text-gray-500 text-center py-4">
                         Belum ada data.
                       </p>
                     ) : (
                       transactions
-                        .slice(0, 4)
+                        .slice(0, 5)
                         .map((tx) => <TransactionCard key={tx.id} tx={tx} />)
                     )}
                   </div>
@@ -1258,17 +1149,57 @@ function App() {
               </div>
             )}
 
+            {/* --- MENU RIWAYAT DENGAN FITUR PENCARIAN & SORTING --- */}
             {activeMenu === "history" && (
-              <div className="animate-in fade-in duration-500">
-                {transactions.length === 0 ? (
-                  <p className="text-center text-gray-500 py-10">
-                    Belum ada riwayat transaksi.
-                  </p>
-                ) : (
-                  transactions.map((tx) => (
-                    <TransactionCard key={tx.id} tx={tx} />
-                  ))
-                )}
+              <div className="animate-in fade-in duration-500 space-y-4">
+                <div className="flex gap-2 mb-6">
+                  {/* Search Bar */}
+                  <div className="relative flex-1">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                      <Search size={18} className="text-gray-400" />
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Cari..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full pl-11 pr-4 py-3.5 bg-white/70 border border-white/60 backdrop-blur-xl rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium transition-all text-gray-800 placeholder-gray-400"
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery("")}
+                        className="absolute inset-y-0 right-0 pr-4 flex items-center text-gray-400 hover:text-gray-600"
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
+                  </div>
+                  {/* Sort Dropdown */}
+                  <select
+                    value={historySort}
+                    onChange={(e) => setHistorySort(e.target.value)}
+                    className="bg-white/70 border border-white/60 backdrop-blur-xl rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold text-gray-700 px-3 cursor-pointer"
+                  >
+                    <option value="newest">Terbaru</option>
+                    <option value="oldest">Terlama</option>
+                    <option value="a-z">A - Z</option>
+                    <option value="z-a">Z - A</option>
+                  </select>
+                </div>
+
+                <div>
+                  {sortedAndFilteredHistory.length === 0 ? (
+                    <p className="text-center text-gray-500 py-10">
+                      {searchQuery
+                        ? `Tidak ada hasil untuk "${searchQuery}"`
+                        : "Belum ada riwayat transaksi."}
+                    </p>
+                  ) : (
+                    sortedAndFilteredHistory.map((tx) => (
+                      <TransactionCard key={tx.id} tx={tx} />
+                    ))
+                  )}
+                </div>
               </div>
             )}
 
@@ -1352,35 +1283,6 @@ function App() {
                     <ChevronRight size={18} className="text-gray-400" />
                   </button>
                   <button
-                    onClick={handleInjectDummyData}
-                    disabled={isProcessing}
-                    className="w-full flex items-center justify-between p-4 hover:bg-green-50 rounded-2xl transition-colors text-left border border-transparent hover:border-green-100 mt-2"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="p-2 bg-green-100 text-green-600 rounded-xl">
-                        <Database size={20} />
-                      </div>
-                      <span className="font-semibold text-green-600">
-                        {isProcessing
-                          ? "Menyuntikkan Data..."
-                          : "Suntik Data Uji Coba (Cheat)"}
-                      </span>
-                    </div>
-                  </button>
-                  <button
-                    onClick={handleResetData}
-                    className="w-full flex items-center justify-between p-4 hover:bg-red-50 rounded-2xl transition-colors text-left border border-transparent hover:border-red-100 mt-2"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="p-2 bg-red-100 text-red-600 rounded-xl">
-                        <Trash2 size={20} />
-                      </div>
-                      <span className="font-semibold text-red-600">
-                        Hapus Data Akun Ini
-                      </span>
-                    </div>
-                  </button>
-                  <button
                     onClick={handleLogout}
                     className="w-full flex items-center justify-between p-4 hover:bg-gray-100 rounded-2xl transition-colors text-left border border-transparent mt-2"
                   >
@@ -1449,7 +1351,6 @@ function App() {
           </nav>
         </div>
 
-        {/* MODAL 1: PILIHAN TAMBAH TRANSAKSI */}
         {showActionSheet && (
           <div className="absolute inset-0 z-50 flex items-end md:items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
             <div
@@ -1518,7 +1419,6 @@ function App() {
           </div>
         )}
 
-        {/* MODAL 2: INPUT MANUAL */}
         {showManualInput && (
           <div className="absolute inset-0 z-50 flex items-end md:items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200 md:p-4">
             <div
@@ -1537,7 +1437,6 @@ function App() {
                   <X size={24} />
                 </button>
               </div>
-
               <div className="flex p-1.5 bg-gray-100 rounded-xl mb-6">
                 <button
                   onClick={() =>
@@ -1556,7 +1455,6 @@ function App() {
                   Pemasukan
                 </button>
               </div>
-
               <div className="space-y-5">
                 <div>
                   <label className="text-sm font-semibold text-gray-500 ml-1">
@@ -1615,7 +1513,6 @@ function App() {
           </div>
         )}
 
-        {/* MODAL 3: PREVIEW FOTO STRUK */}
         {imagePreview && (
           <div className="absolute inset-0 z-50 flex items-center justify-center p-4 md:p-8 bg-black/60 backdrop-blur-md animate-in fade-in duration-200">
             <div className="w-full max-w-sm sm:max-w-md bg-white/90 backdrop-blur-2xl border border-white/60 p-6 rounded-[2.5rem] shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]">
@@ -1652,7 +1549,10 @@ function App() {
         {/* MODAL 4: DETAIL TRANSAKSI & EDIT */}
         {selectedTransaction && (
           <div className="absolute inset-0 z-50 flex items-center justify-center p-3 md:p-8 bg-black/60 backdrop-blur-md animate-in fade-in duration-200">
-            <div className="absolute inset-0" onClick={closePopup}></div>
+            <div
+              className="absolute inset-0"
+              onClick={isEditing ? () => setIsEditing(false) : closePopup}
+            ></div>
             <div className="w-full max-w-[22rem] sm:max-w-sm bg-white/95 backdrop-blur-3xl border border-white/50 rounded-[2rem] p-5 sm:p-6 shadow-2xl relative animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]">
               <div className="absolute top-5 right-5 flex gap-2">
                 {!isEditing && (
@@ -1680,7 +1580,7 @@ function App() {
                 )}
               </div>
 
-              <div className="text-center mb-4 mt-2 px-8 flex flex-col items-center">
+              <div className="text-center mb-4 mt-2 px-6 flex flex-col items-center">
                 <div
                   className={`w-12 h-12 text-2xl rounded-2xl flex items-center justify-center mx-auto mb-2 ${selectedTransaction.type === "income" ? "bg-green-100" : "bg-gray-100"}`}
                 >
@@ -1729,7 +1629,7 @@ function App() {
                   </div>
                 ) : (
                   <>
-                    <h3 className="font-bold text-xl text-gray-900 truncate w-full">
+                    <h3 className="font-bold text-xl text-gray-900 leading-tight w-full break-words px-2">
                       {selectedTransaction.store}
                     </h3>
                     <p className="text-xs text-gray-400 mt-1">
@@ -1830,7 +1730,7 @@ function App() {
                               className="flex justify-between items-start gap-2"
                             >
                               <div className="flex-1 min-w-0 pr-2">
-                                <p className="font-semibold text-gray-800 text-sm truncate">
+                                <p className="font-semibold text-gray-800 text-sm break-words leading-tight">
                                   {item.name}
                                 </p>
                                 <div className="mt-1.5">
