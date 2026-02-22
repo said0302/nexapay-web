@@ -22,10 +22,14 @@ import {
   Tags,
   CalendarDays,
   Search,
+  AlertCircle,
 } from "lucide-react";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// --- IMPORT FIREBASE DITAMBAH getDoc dan setDoc ---
+// --- IMPORT FRAMER MOTION (ANIMASI) ---
+import { motion, AnimatePresence } from "framer-motion";
+
+// --- IMPORT FIREBASE ---
 import {
   collection,
   onSnapshot,
@@ -42,7 +46,39 @@ import {
 import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth, googleProvider } from "./firebase";
 
-// --- KOMPONEN GRAFIK GARIS ---
+// --- FUNGSI FORMAT TERBILANG (RUPIAH) ---
+const formatTerbilang = (num) => {
+  if (num === 0) return "Nol Rupiah";
+  const isNegative = num < 0;
+  const absNum = Math.abs(num);
+  let result = "";
+
+  if (absNum >= 1000000000000)
+    result =
+      parseFloat((absNum / 1000000000000).toFixed(2))
+        .toString()
+        .replace(".", ",") + " Triliun";
+  else if (absNum >= 1000000000)
+    result =
+      parseFloat((absNum / 1000000000).toFixed(2))
+        .toString()
+        .replace(".", ",") + " Miliar";
+  else if (absNum >= 1000000)
+    result =
+      parseFloat((absNum / 1000000).toFixed(2))
+        .toString()
+        .replace(".", ",") + " Juta";
+  else if (absNum >= 1000)
+    result =
+      parseFloat((absNum / 1000).toFixed(1))
+        .toString()
+        .replace(".", ",") + " Ribu";
+  else result = absNum.toString();
+
+  return (isNegative ? "- " : "") + result + " Rupiah";
+};
+
+// --- KOMPONEN GRAFIK GARIS (BERANIMASI) ---
 const LineChart = ({ data, color = "#3B82F6" }) => {
   if (!data || data.length === 0) return null;
   const maxVal = Math.max(...data.map((d) => d.val), 1);
@@ -88,24 +124,32 @@ const LineChart = ({ data, color = "#3B82F6" }) => {
             <stop offset="100%" stopColor={color} stopOpacity={0} />
           </linearGradient>
         </defs>
-        <path
+        <motion.path
           d={areaPath}
           fill={`url(#grad-${color.replace("#", "")})`}
-          className="transition-all duration-700 ease-in-out"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 1 }}
         />
-        <path
+        <motion.path
           d={linePath}
           fill="none"
           stroke={color}
           strokeWidth="3"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="drop-shadow-md transition-all duration-700 ease-in-out"
+          className="drop-shadow-md"
+          initial={{ pathLength: 0 }}
+          animate={{ pathLength: 1 }}
+          transition={{ duration: 1.5, ease: "easeInOut" }}
         />
       </svg>
       {points.map((p, i) => (
-        <div
+        <motion.div
           key={i}
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ delay: i * 0.1, type: "spring" }}
           className="absolute w-6 h-6 -ml-3 -mt-3 group cursor-pointer flex items-center justify-center z-10"
           style={{ left: `${p.percentX}%`, top: `${p.percentY}%` }}
         >
@@ -116,7 +160,7 @@ const LineChart = ({ data, color = "#3B82F6" }) => {
           <div className="opacity-0 group-hover:opacity-100 absolute bottom-full mb-1 bg-gray-900 text-white text-[10px] font-bold px-2 py-1 rounded shadow-lg transition-opacity whitespace-nowrap pointer-events-none">
             Rp {(p.val / 1000).toLocaleString("id-ID")}K
           </div>
-        </div>
+        </motion.div>
       ))}
       {points.map((p, i) => (
         <div
@@ -150,6 +194,27 @@ function App() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [historySort, setHistorySort] = useState("newest");
+
+  const [dialog, setDialog] = useState({
+    isOpen: false,
+    type: "alert",
+    title: "",
+    message: "",
+    onConfirm: null,
+  });
+
+  const showAlert = (title, message) =>
+    setDialog({ isOpen: true, type: "alert", title, message, onConfirm: null });
+  const showConfirm = (title, message, onConfirm) =>
+    setDialog({ isOpen: true, type: "confirm", title, message, onConfirm });
+  const closeDialog = () =>
+    setDialog({
+      isOpen: false,
+      type: "alert",
+      title: "",
+      message: "",
+      onConfirm: null,
+    });
 
   const defaultCategories = [
     "Makanan & Minuman",
@@ -192,7 +257,7 @@ function App() {
     "Desember",
   ];
 
-  const [categories, setCategories] = useState(defaultCategories); // Dikosongkan dari localStorage
+  const [categories, setCategories] = useState(defaultCategories);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [manualData, setManualData] = useState({
     type: "expense",
@@ -210,18 +275,14 @@ function App() {
     return () => unsubscribeAuth();
   }, []);
 
-  // --- PERBAIKAN: MENGAMBIL KATEGORI DARI FIREBASE CLOUD ---
   useEffect(() => {
     const fetchUserData = async () => {
       if (currentUser) {
         const userRef = doc(db, "users", currentUser.uid);
         const userSnap = await getDoc(userRef);
-
-        if (userSnap.exists()) {
-          // Jika user sudah punya data kategori di Cloud, pakai yang itu
+        if (userSnap.exists())
           setCategories(userSnap.data().categories || defaultCategories);
-        } else {
-          // Jika akun baru, buatkan brankas di Cloud dengan kategori default
+        else {
           await setDoc(userRef, { categories: defaultCategories });
           setCategories(defaultCategories);
         }
@@ -229,7 +290,6 @@ function App() {
     };
     fetchUserData();
   }, [currentUser]);
-  // -------------------------------------------------------------
 
   useEffect(() => {
     if (!currentUser) return;
@@ -252,16 +312,23 @@ function App() {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (error) {
-      alert("Gagal login dengan Google: " + error.message);
+      showAlert(
+        "Gagal Login",
+        "Tidak dapat terhubung dengan Google. " + error.message,
+      );
     }
   };
 
-  const handleLogout = async () => {
-    if (window.confirm("Yakin ingin keluar?")) {
-      await signOut(auth);
-      setTransactions([]);
-      setCategories(defaultCategories); // Reset ke default di layar
-    }
+  const handleLogout = () => {
+    showConfirm(
+      "Keluar Akun",
+      "Apakah Anda yakin ingin keluar dari akun ini?",
+      async () => {
+        await signOut(auth);
+        setTransactions([]);
+        setCategories(defaultCategories);
+      },
+    );
   };
 
   const getValidDate = (tx) =>
@@ -369,18 +436,16 @@ function App() {
     if (t.type !== "expense") return false;
     const txDate = getValidDate(t);
     if (isNaN(txDate)) return false;
-    if (chartFilter === "Mingguan") {
+    if (chartFilter === "Mingguan")
       return Math.ceil(Math.abs(now - txDate) / (1000 * 60 * 60 * 24)) <= 7;
-    } else if (chartFilter === "Bulanan") {
+    else if (chartFilter === "Bulanan")
       return (
         txDate.getFullYear() === selectedYear &&
         txDate.getMonth() === selectedMonth
       );
-    } else if (chartFilter === "Tahunan") {
+    else if (chartFilter === "Tahunan")
       return txDate.getFullYear() === selectedYear;
-    } else if (chartFilter === "Semua") {
-      return true;
-    }
+    else if (chartFilter === "Semua") return true;
     return false;
   });
 
@@ -549,7 +614,10 @@ function App() {
     if (!selectedFile || !currentUser) return;
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
-      alert("API Key Gemini belum dipasang di .env");
+      showAlert(
+        "Kunci Belum Diatur",
+        "API Key Gemini belum dipasang di sistem.",
+      );
       return;
     }
 
@@ -604,24 +672,32 @@ function App() {
           );
           setSelectedTransaction({ ...newTransaction, id: docRef.id });
           setIsEditing(false);
-
           setImagePreview(null);
           setSelectedFile(null);
           setIsProcessing(false);
         } catch (e) {
-          alert("Gagal membaca struk.");
+          showAlert(
+            "Gagal Ekstrak",
+            "AI tidak dapat membaca data dari gambar struk ini.",
+          );
           setIsProcessing(false);
         }
       };
     } catch (e) {
-      alert("Gagal terhubung ke AI.");
+      showAlert(
+        "Gagal Terhubung",
+        "Tidak dapat terhubung ke AI. Cek koneksi atau Kunci API.",
+      );
       setIsProcessing(false);
     }
   };
 
   const handleSaveManual = async () => {
     if (!manualData.amount || !manualData.store || !currentUser)
-      return alert("Data tidak lengkap / belum login");
+      return showAlert(
+        "Peringatan",
+        "Isi nominal dan keterangan dengan lengkap!",
+      );
     const nominal =
       manualData.type === "expense"
         ? -Math.abs(Number(manualData.amount))
@@ -663,56 +739,56 @@ function App() {
     });
   };
 
-  // --- PERBAIKAN: SIMPAN TAMBAH KATEGORI KE CLOUD ---
   const handleAddCategory = async () => {
     if (newCategoryName.trim() === "") return;
     if (categories.includes(newCategoryName.trim()))
-      return alert("Kategori sudah ada!");
-
+      return showAlert(
+        "Sudah Ada",
+        `Kategori "${newCategoryName.trim()}" sudah ada!`,
+      );
     const updatedCategories = [...categories, newCategoryName.trim()];
     setCategories(updatedCategories);
     setNewCategoryName("");
-
-    if (currentUser) {
+    if (currentUser)
       await updateDoc(doc(db, "users", currentUser.uid), {
         categories: updatedCategories,
       });
-    }
   };
 
-  // --- PERBAIKAN: SIMPAN HAPUS KATEGORI KE CLOUD ---
   const handleDeleteCategory = async (catToDelete) => {
     if (catToDelete === "Lainnya")
-      return alert("Kategori 'Lainnya' tidak bisa dihapus.");
-    if (
-      window.confirm(
-        `Hapus kategori "${catToDelete}"?\nTransaksi lama dengan kategori ini akan otomatis jadi 'Lainnya'.`,
-      )
-    ) {
-      const updatedCategories = categories.filter((cat) => cat !== catToDelete);
-      setCategories(updatedCategories);
-
-      if (currentUser) {
-        await updateDoc(doc(db, "users", currentUser.uid), {
-          categories: updatedCategories,
-        });
-      }
-
-      transactions.forEach(async (tx) => {
-        let needsUpdate = false;
-        let updatedItems = tx.items?.map((item) => {
-          if (item.category === catToDelete) {
-            needsUpdate = true;
-            return { ...item, category: "Lainnya" };
-          }
-          return item;
-        });
-        if (needsUpdate)
-          await updateDoc(doc(db, "transactions", tx.id), {
-            items: updatedItems,
+      return showAlert(
+        "Ditolak",
+        "Kategori sistem 'Lainnya' tidak dapat dihapus.",
+      );
+    showConfirm(
+      "Hapus Kategori",
+      `Hapus kategori "${catToDelete}"? Transaksi lama akan otomatis dialihkan ke 'Lainnya'.`,
+      async () => {
+        const updatedCategories = categories.filter(
+          (cat) => cat !== catToDelete,
+        );
+        setCategories(updatedCategories);
+        if (currentUser)
+          await updateDoc(doc(db, "users", currentUser.uid), {
+            categories: updatedCategories,
           });
-      });
-    }
+        transactions.forEach(async (tx) => {
+          let needsUpdate = false;
+          let updatedItems = tx.items?.map((item) => {
+            if (item.category === catToDelete) {
+              needsUpdate = true;
+              return { ...item, category: "Lainnya" };
+            }
+            return item;
+          });
+          if (needsUpdate)
+            await updateDoc(doc(db, "transactions", tx.id), {
+              items: updatedItems,
+            });
+        });
+      },
+    );
   };
 
   const startEditing = () => {
@@ -749,18 +825,20 @@ function App() {
         editData.type === "income" ? Math.abs(newTotal) : -Math.abs(newTotal),
     });
   };
-
   const saveEdit = async () => {
     await updateDoc(doc(db, "transactions", editData.id), editData);
     setSelectedTransaction(editData);
     setIsEditing(false);
   };
-
-  const handleDelete = async (id) => {
-    if (window.confirm("Yakin hapus?")) {
-      await deleteDoc(doc(db, "transactions", id));
-      setSelectedTransaction(null);
-    }
+  const handleDelete = (id) => {
+    showConfirm(
+      "Hapus Transaksi",
+      "Data transaksi ini akan dihapus secara permanen. Lanjutkan?",
+      async () => {
+        await deleteDoc(doc(db, "transactions", id));
+        setSelectedTransaction(null);
+      },
+    );
   };
   const closePopup = () => {
     setSelectedTransaction(null);
@@ -768,9 +846,13 @@ function App() {
   };
 
   const TransactionCard = ({ tx }) => (
-    <div
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      whileHover={{ scale: 1.01 }}
+      whileTap={{ scale: 0.98 }}
       onClick={() => setSelectedTransaction(tx)}
-      className="group flex flex-col p-4 bg-white/80 backdrop-blur-md border border-white/60 rounded-[1.2rem] hover:bg-white cursor-pointer transition-all shadow-sm mb-3"
+      className="group flex flex-col p-4 bg-white/80 backdrop-blur-md border border-white/60 rounded-[1.2rem] hover:bg-white cursor-pointer shadow-sm mb-3 transition-colors"
     >
       <div className="flex justify-between items-center pb-2 border-b border-gray-200/60 mb-3 gap-2">
         <div className="flex items-center gap-2 flex-1 min-w-0 pr-2">
@@ -811,7 +893,7 @@ function App() {
           </span>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 
   if (isAuthChecking)
@@ -823,20 +905,64 @@ function App() {
 
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-[#F2F2F7] flex justify-center items-center font-sans p-6">
-        <div className="w-full max-w-md bg-white p-8 rounded-[2.5rem] shadow-2xl text-center">
-          <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-xl mx-auto mb-6">
+      <div className="min-h-screen bg-[#F2F2F7] flex justify-center items-center font-sans p-6 relative">
+        <AnimatePresence>
+          {dialog.isOpen && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            >
+              <motion.div
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                className="w-full max-w-xs bg-white/95 backdrop-blur-3xl rounded-[2rem] p-6 shadow-2xl text-center"
+              >
+                <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <AlertCircle size={24} />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900 mb-2">
+                  {dialog.title}
+                </h3>
+                <p className="text-sm text-gray-500 mb-6">{dialog.message}</p>
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={closeDialog}
+                  className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg"
+                >
+                  Mengerti
+                </motion.button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-md bg-white p-8 rounded-[2.5rem] shadow-2xl text-center"
+        >
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: "spring", delay: 0.2 }}
+            className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-xl mx-auto mb-6"
+          >
             <ScanLine size={40} />
-          </div>
+          </motion.div>
           <h1 className="text-3xl font-extrabold text-gray-900 mb-2">
             NexaPay.
           </h1>
           <p className="text-gray-500 mb-10 font-medium text-sm">
             Aplikasi Keuangan Pintar Berbasis AI
           </p>
-          <button
+          <motion.button
+            whileTap={{ scale: 0.95 }}
             onClick={handleLogin}
-            className="w-full bg-gray-900 text-white p-4 rounded-2xl flex items-center justify-center gap-3 shadow-lg hover:bg-gray-800 transition-transform active:scale-95"
+            className="w-full bg-gray-900 text-white p-4 rounded-2xl flex items-center justify-center gap-3 shadow-lg"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path
@@ -857,11 +983,18 @@ function App() {
               />
             </svg>
             <span className="font-bold">Masuk dengan Google</span>
-          </button>
-        </div>
+          </motion.button>
+        </motion.div>
       </div>
     );
   }
+
+  // --- VARIAN ANIMASI PINDAH TAB MENU ---
+  const tabVariants = {
+    hidden: { opacity: 0, x: 20 },
+    enter: { opacity: 1, x: 0, transition: { duration: 0.3, ease: "easeOut" } },
+    exit: { opacity: 0, x: -20, transition: { duration: 0.2, ease: "easeIn" } },
+  };
 
   return (
     <div className="min-h-screen bg-[#F2F2F7] md:bg-gray-100 p-0 md:p-8 flex justify-center items-center font-sans relative overflow-hidden">
@@ -884,6 +1017,53 @@ function App() {
         className="hidden"
       />
 
+      <AnimatePresence>
+        {dialog.isOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-[100] flex items-center justify-center p-5 bg-black/60 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              transition={{ type: "spring", stiffness: 300, damping: 25 }}
+              className="w-full max-w-[20rem] bg-white/95 backdrop-blur-3xl rounded-[2rem] p-6 shadow-2xl text-center"
+            >
+              <h3 className="text-xl font-extrabold text-gray-900 mb-2">
+                {dialog.title}
+              </h3>
+              <p className="text-sm font-medium text-gray-500 mb-6 leading-relaxed">
+                {dialog.message}
+              </p>
+              <div className="flex gap-3">
+                {dialog.type === "confirm" && (
+                  <motion.button
+                    whileTap={{ scale: 0.95 }}
+                    onClick={closeDialog}
+                    className="flex-1 py-3.5 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200"
+                  >
+                    Batal
+                  </motion.button>
+                )}
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => {
+                    if (dialog.onConfirm) dialog.onConfirm();
+                    closeDialog();
+                  }}
+                  className={`flex-1 py-3.5 text-white font-bold rounded-xl shadow-lg ${dialog.type === "confirm" ? "bg-blue-600" : "bg-gray-900"}`}
+                >
+                  {dialog.type === "confirm" ? "Oke" : "Mengerti"}
+                </motion.button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="w-full h-screen md:h-[90vh] md:max-w-6xl md:bg-white/40 md:backdrop-blur-3xl md:border md:border-white/60 md:rounded-[3rem] md:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.15)] flex flex-col md:flex-row overflow-hidden relative transition-all duration-500 z-10">
         <aside className="hidden md:flex flex-col w-72 bg-white/30 border-r border-white/50 p-8 z-10 backdrop-blur-xl">
           <div className="flex items-center gap-3 mb-12">
@@ -901,7 +1081,8 @@ function App() {
               { id: "history", icon: History, label: "Riwayat" },
               { id: "settings", icon: SettingsIcon, label: "Pengaturan" },
             ].map((menu) => (
-              <button
+              <motion.button
+                whileTap={{ scale: 0.95 }}
                 key={menu.id}
                 onClick={() => setActiveMenu(menu.id)}
                 className={`w-full flex items-center gap-4 px-5 py-3.5 rounded-2xl transition-all duration-300 ${activeMenu === menu.id ? "bg-white/80 text-blue-600 shadow-sm border border-white/50" : "text-gray-500 hover:bg-white/50 hover:text-gray-900"}`}
@@ -911,20 +1092,21 @@ function App() {
                   strokeWidth={activeMenu === menu.id ? 2.5 : 2}
                 />
                 <span className="font-semibold text-sm">{menu.label}</span>
-              </button>
+              </motion.button>
             ))}
           </nav>
-          <button
+          <motion.button
+            whileTap={{ scale: 0.95 }}
             onClick={() => setShowActionSheet(true)}
             className="mt-auto w-full bg-gray-900 text-white p-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg hover:bg-gray-800 transition-colors"
           >
             <Plus size={20} />{" "}
             <span className="font-bold">Tambah Transaksi</span>
-          </button>
+          </motion.button>
         </aside>
 
         <main className="flex-1 flex flex-col h-full relative overflow-hidden bg-transparent md:bg-white/10">
-          <header className="px-6 md:px-10 pt-14 md:pt-10 pb-4 flex justify-between items-center z-10 shrink-0">
+          <header className="px-6 md:px-10 pt-6 md:pt-10 pb-4 flex justify-between items-center z-10 shrink-0">
             <div>
               <p className="text-gray-500 text-sm font-medium mb-0.5 md:hidden">
                 Halo, {currentUser?.displayName?.split(" ")[0]}
@@ -949,384 +1131,455 @@ function App() {
             />
           </header>
 
-          <div className="flex-1 overflow-y-auto px-6 md:px-10 pb-32 md:pb-10 no-scrollbar z-10">
-            {activeMenu === "home" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 animate-in fade-in duration-500">
-                <div className="flex flex-col gap-4 md:gap-6">
-                  <div className="relative p-6 md:p-8 rounded-[1.5rem] border border-white/40 bg-white/40 backdrop-blur-2xl shadow-lg overflow-hidden group">
-                    <div className="absolute inset-0 bg-gradient-to-br from-blue-500/90 to-indigo-600/90 mix-blend-multiply"></div>
-                    <div className="relative z-10 text-white flex flex-col justify-center">
-                      <div className="flex items-center gap-2 mb-2 opacity-90">
-                        <Wallet size={18} />
-                        <p className="text-xs md:text-sm font-bold uppercase tracking-wider">
-                          Sisa Saldo
-                        </p>
-                      </div>
-                      <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tighter drop-shadow-md truncate">
-                        Rp {currentBalance.toLocaleString("id-ID")}
-                      </h2>
-                    </div>
-                  </div>
-                  <div className="relative p-6 md:p-8 rounded-[1.5rem] border border-white/40 bg-white/40 backdrop-blur-2xl shadow-lg overflow-hidden group">
-                    <div className="absolute inset-0 bg-gradient-to-br from-rose-500/90 to-red-600/90 mix-blend-multiply"></div>
-                    <div className="relative z-10 text-white flex flex-col justify-center">
-                      <div className="flex items-center gap-2 mb-2 opacity-90">
-                        <ArrowDownCircle size={18} />
-                        <p className="text-xs md:text-sm font-bold uppercase tracking-wider">
-                          Total Pengeluaran
-                        </p>
-                      </div>
-                      <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tighter drop-shadow-md truncate">
-                        Rp {totalExpense.toLocaleString("id-ID")}
-                      </h2>
-                    </div>
-                  </div>
-                  <div className="bg-white/60 border border-white/60 backdrop-blur-xl rounded-[1.5rem] p-5 shadow-sm mt-1">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-base font-bold text-gray-900">
-                        Statistik Pengeluaran
-                      </h3>
-                      <select
-                        value={homeChartFilter}
-                        onChange={(e) => setHomeChartFilter(e.target.value)}
-                        className="text-xs bg-white border border-gray-200 rounded-lg p-1.5 font-bold text-blue-600 outline-none cursor-pointer"
-                      >
-                        <option value="Mingguan">Minggu Ini</option>
-                        <option value="Bulanan">Bulan Ini</option>
-                        <option value="Tahunan">Tahun Ini</option>
-                      </select>
-                    </div>
-                    <div className="mb-2">
-                      <p className="text-xs font-semibold text-gray-500 mb-0.5">
-                        {homeChartFilter === "Mingguan"
-                          ? "Total Minggu Ini"
-                          : homeChartFilter === "Bulanan"
-                            ? "Total Bulan Ini"
-                            : "Total Tahun Ini"}
-                      </p>
-                      <h4 className="text-xl font-extrabold text-gray-900 truncate flex items-end">
-                        Rp {homeTotal.toLocaleString("id-ID")}
-                      </h4>
-                    </div>
-                    <LineChart data={homeChartData} color="#3B82F6" />
-                  </div>
-                </div>
-                <div className="bg-white/50 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 shadow-sm flex flex-col">
-                  <div className="flex justify-between items-end mb-6 shrink-0">
-                    <h3 className="text-xl font-bold text-gray-900 tracking-tight">
-                      Terbaru
-                    </h3>
-                    <button
-                      onClick={() => setActiveMenu("history")}
-                      className="text-blue-600 text-sm font-bold flex items-center"
+          <div className="flex-1 overflow-y-auto px-6 md:px-10 pb-32 md:pb-10 no-scrollbar z-10 overflow-x-hidden">
+            <AnimatePresence mode="wait">
+              {/* --- KONTEN BERANDA --- */}
+              {activeMenu === "home" && (
+                <motion.div
+                  key="home"
+                  variants={tabVariants}
+                  initial="hidden"
+                  animate="enter"
+                  exit="exit"
+                  className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8"
+                >
+                  <div className="flex flex-col gap-4 md:gap-6">
+                    <motion.div
+                      whileHover={{ scale: 1.02 }}
+                      className="relative p-6 md:p-8 rounded-[1.5rem] border border-white/40 bg-white/40 backdrop-blur-2xl shadow-lg overflow-hidden group cursor-default"
                     >
-                      Semua <ChevronRight size={16} />
-                    </button>
+                      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/90 to-indigo-600/90 mix-blend-multiply"></div>
+                      <div className="relative z-10 text-white flex flex-col justify-center">
+                        <div className="flex items-center gap-2 mb-2 opacity-90">
+                          <Wallet size={18} />
+                          <p className="text-xs md:text-sm font-bold uppercase tracking-wider">
+                            Sisa Saldo
+                          </p>
+                        </div>
+                        <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tighter drop-shadow-md truncate">
+                          Rp {currentBalance.toLocaleString("id-ID")}
+                        </h2>
+                        <p className="text-xs sm:text-sm font-semibold opacity-80 mt-1.5 tracking-wide">
+                          ~ {formatTerbilang(currentBalance)}
+                        </p>
+                      </div>
+                    </motion.div>
+                    <motion.div
+                      whileHover={{ scale: 1.02 }}
+                      className="relative p-6 md:p-8 rounded-[1.5rem] border border-white/40 bg-white/40 backdrop-blur-2xl shadow-lg overflow-hidden group cursor-default"
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-br from-rose-500/90 to-red-600/90 mix-blend-multiply"></div>
+                      <div className="relative z-10 text-white flex flex-col justify-center">
+                        <div className="flex items-center gap-2 mb-2 opacity-90">
+                          <ArrowDownCircle size={18} />
+                          <p className="text-xs md:text-sm font-bold uppercase tracking-wider">
+                            Total Pengeluaran
+                          </p>
+                        </div>
+                        <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tighter drop-shadow-md truncate">
+                          Rp {totalExpense.toLocaleString("id-ID")}
+                        </h2>
+                        <p className="text-xs sm:text-sm font-semibold opacity-80 mt-1.5 tracking-wide">
+                          ~ {formatTerbilang(totalExpense)}
+                        </p>
+                      </div>
+                    </motion.div>
+                    <div className="bg-white/60 border border-white/60 backdrop-blur-xl rounded-[1.5rem] p-5 shadow-sm mt-1">
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-base font-bold text-gray-900">
+                          Statistik Pengeluaran
+                        </h3>
+                        <select
+                          value={homeChartFilter}
+                          onChange={(e) => setHomeChartFilter(e.target.value)}
+                          className="text-xs bg-white border border-gray-200 rounded-lg p-1.5 font-bold text-blue-600 outline-none cursor-pointer"
+                        >
+                          <option value="Mingguan">Minggu Ini</option>
+                          <option value="Bulanan">Bulan Ini</option>
+                          <option value="Tahunan">Tahun Ini</option>
+                        </select>
+                      </div>
+                      <div className="mb-2">
+                        <p className="text-xs font-semibold text-gray-500 mb-0.5">
+                          {homeChartFilter === "Mingguan"
+                            ? "Total Minggu Ini"
+                            : homeChartFilter === "Bulanan"
+                              ? "Total Bulan Ini"
+                              : "Total Tahun Ini"}
+                        </p>
+                        <h4 className="text-xl font-extrabold text-gray-900 truncate flex items-end">
+                          Rp {homeTotal.toLocaleString("id-ID")}
+                        </h4>
+                      </div>
+                      <LineChart data={homeChartData} color="#3B82F6" />
+                    </div>
                   </div>
-                  <div className="flex-1 overflow-y-auto no-scrollbar">
-                    {transactions.length === 0 ? (
-                      <p className="text-sm text-gray-500 text-center py-4">
-                        Belum ada data.
-                      </p>
-                    ) : (
-                      transactions
-                        .slice(0, 5)
-                        .map((tx) => <TransactionCard key={tx.id} tx={tx} />)
-                    )}
+                  <div className="bg-white/50 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 shadow-sm flex flex-col">
+                    <div className="flex justify-between items-end mb-6 shrink-0">
+                      <h3 className="text-xl font-bold text-gray-900 tracking-tight">
+                        Terbaru
+                      </h3>
+                      <button
+                        onClick={() => setActiveMenu("history")}
+                        className="text-blue-600 text-sm font-bold flex items-center"
+                      >
+                        Semua <ChevronRight size={16} />
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto no-scrollbar">
+                      {transactions.length === 0 ? (
+                        <p className="text-sm text-gray-500 text-center py-4">
+                          Belum ada data.
+                        </p>
+                      ) : (
+                        transactions
+                          .slice(0, 5)
+                          .map((tx) => <TransactionCard key={tx.id} tx={tx} />)
+                      )}
+                    </div>
                   </div>
-                </div>
-              </div>
-            )}
+                </motion.div>
+              )}
 
-            {activeMenu === "chart" && (
-              <div className="animate-in fade-in duration-500 space-y-6">
-                <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 backdrop-blur-xl rounded-[2.5rem] p-8 shadow-xl text-white relative overflow-hidden">
-                  <div className="relative z-10">
-                    <div className="flex items-center gap-2 mb-1 opacity-80">
-                      <CalendarDays size={16} />
-                      <p className="text-xs md:text-sm font-medium uppercase tracking-wider">
-                        {chartFilter === "Mingguan"
-                          ? "7 Hari Terakhir"
-                          : chartFilter === "Bulanan"
-                            ? `${monthNames[selectedMonth]} ${selectedYear}`
-                            : chartFilter === "Tahunan"
-                              ? `Tahun ${selectedYear}`
-                              : "Seluruh Waktu"}
+              {/* --- KONTEN ANALISIS --- */}
+              {activeMenu === "chart" && (
+                <motion.div
+                  key="chart"
+                  variants={tabVariants}
+                  initial="hidden"
+                  animate="enter"
+                  exit="exit"
+                  className="space-y-6"
+                >
+                  <motion.div
+                    whileHover={{ scale: 1.02 }}
+                    className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 backdrop-blur-xl rounded-[1.5rem] p-6 md:p-8 shadow-xl text-white relative overflow-hidden cursor-default"
+                  >
+                    <div className="relative z-10">
+                      <div className="flex items-center gap-2 mb-2 opacity-80">
+                        <CalendarDays size={16} />
+                        <p className="text-xs md:text-sm font-medium uppercase tracking-wider">
+                          {chartFilter === "Mingguan"
+                            ? "7 Hari Terakhir"
+                            : chartFilter === "Bulanan"
+                              ? `${monthNames[selectedMonth]} ${selectedYear}`
+                              : chartFilter === "Tahunan"
+                                ? `Tahun ${selectedYear}`
+                                : "Seluruh Waktu"}
+                        </p>
+                      </div>
+                      <h3 className="text-3xl sm:text-4xl font-extrabold truncate">
+                        Rp {filteredTotalExpense.toLocaleString("id-ID")}
+                      </h3>
+                      <p className="text-xs sm:text-sm font-semibold opacity-80 mt-1.5 tracking-wide">
+                        ~ {formatTerbilang(filteredTotalExpense)}
                       </p>
                     </div>
-                    <h3 className="text-3xl sm:text-4xl font-extrabold truncate mt-2">
-                      Rp {filteredTotalExpense.toLocaleString("id-ID")}
-                    </h3>
-                  </div>
-                </div>
-                <div className="bg-white/70 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 shadow-sm flex flex-col relative pt-8 pb-4">
-                  <div className="flex p-1 bg-gray-100/80 rounded-xl mb-4 mx-auto w-full max-w-lg">
-                    {["Mingguan", "Bulanan", "Tahunan", "Semua"].map(
-                      (filter) => (
-                        <button
-                          key={filter}
-                          onClick={() => setChartFilter(filter)}
-                          className={`flex-1 py-2 text-xs md:text-sm font-bold rounded-lg transition-all ${chartFilter === filter ? "bg-white shadow text-purple-600" : "text-gray-500 hover:text-gray-800"}`}
-                        >
-                          {filter}
-                        </button>
-                      ),
-                    )}
-                  </div>
-                  {chartFilter !== "Mingguan" && chartFilter !== "Semua" && (
-                    <div className="flex justify-center gap-2 mb-2 animate-in fade-in">
-                      {chartFilter === "Bulanan" && (
+                  </motion.div>
+                  <div className="bg-white/70 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 shadow-sm flex flex-col relative pt-8 pb-4">
+                    <div className="flex p-1 bg-gray-100/80 rounded-xl mb-4 mx-auto w-full max-w-lg">
+                      {["Mingguan", "Bulanan", "Tahunan", "Semua"].map(
+                        (filter) => (
+                          <motion.button
+                            whileTap={{ scale: 0.95 }}
+                            key={filter}
+                            onClick={() => setChartFilter(filter)}
+                            className={`flex-1 py-2 text-xs md:text-sm font-bold rounded-lg transition-all ${chartFilter === filter ? "bg-white shadow text-purple-600" : "text-gray-500 hover:text-gray-800"}`}
+                          >
+                            {filter}
+                          </motion.button>
+                        ),
+                      )}
+                    </div>
+                    {chartFilter !== "Mingguan" && chartFilter !== "Semua" && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="flex justify-center gap-2 mb-2"
+                      >
+                        {chartFilter === "Bulanan" && (
+                          <select
+                            value={selectedMonth}
+                            onChange={(e) =>
+                              setSelectedMonth(Number(e.target.value))
+                            }
+                            className="p-2 px-3 bg-white border border-gray-200 rounded-lg text-sm font-bold text-gray-700 outline-none shadow-sm cursor-pointer hover:bg-gray-50"
+                          >
+                            {monthNames.map((m, i) => (
+                              <option key={i} value={i}>
+                                {m}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                         <select
-                          value={selectedMonth}
+                          value={selectedYear}
                           onChange={(e) =>
-                            setSelectedMonth(Number(e.target.value))
+                            setSelectedYear(Number(e.target.value))
                           }
                           className="p-2 px-3 bg-white border border-gray-200 rounded-lg text-sm font-bold text-gray-700 outline-none shadow-sm cursor-pointer hover:bg-gray-50"
                         >
-                          {monthNames.map((m, i) => (
-                            <option key={i} value={i}>
-                              {m}
+                          {availableYears.map((y) => (
+                            <option key={y} value={y}>
+                              {y}
                             </option>
                           ))}
                         </select>
-                      )}
-                      <select
-                        value={selectedYear}
-                        onChange={(e) =>
-                          setSelectedYear(Number(e.target.value))
-                        }
-                        className="p-2 px-3 bg-white border border-gray-200 rounded-lg text-sm font-bold text-gray-700 outline-none shadow-sm cursor-pointer hover:bg-gray-50"
-                      >
-                        {availableYears.map((y) => (
-                          <option key={y} value={y}>
-                            {y}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                  <LineChart data={currentAnalysisChartView} color="#8B5CF6" />
-                </div>
-                <div className="bg-white/70 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 md:p-8 shadow-sm">
-                  <h3 className="text-lg font-bold text-gray-900 mb-6 text-center">
-                    Distribusi Kategori
-                  </h3>
-                  {categoryList.length > 0 ? (
-                    <div className="flex flex-col md:flex-row items-center gap-8 md:gap-12">
-                      <div
-                        className="relative w-48 h-48 sm:w-56 sm:h-56 shrink-0 flex items-center justify-center rounded-full shadow-[0_10px_40px_rgba(0,0,0,0.1)] transition-transform hover:scale-105 duration-500"
-                        style={pieStyle}
-                      >
-                        <div className="w-32 h-32 sm:w-36 sm:h-36 bg-[#F2F2F7] md:bg-white rounded-full flex flex-col items-center justify-center shadow-inner">
-                          <p className="text-xs font-bold text-gray-400 uppercase">
-                            Total
-                          </p>
-                          <p className="text-sm sm:text-base font-black text-gray-900 truncate max-w-[80px] sm:max-w-[100px]">
-                            Rp {(filteredTotalExpense / 1000).toFixed(0)}K
-                          </p>
+                      </motion.div>
+                    )}
+                    <LineChart
+                      data={currentAnalysisChartView}
+                      color="#8B5CF6"
+                    />
+                  </div>
+                  <div className="bg-white/70 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 md:p-8 shadow-sm">
+                    <h3 className="text-lg font-bold text-gray-900 mb-6 text-center">
+                      Distribusi Kategori
+                    </h3>
+                    {categoryList.length > 0 ? (
+                      <div className="flex flex-col md:flex-row items-center gap-8 md:gap-12">
+                        <motion.div
+                          whileHover={{ scale: 1.05 }}
+                          transition={{ type: "spring" }}
+                          className="relative w-48 h-48 sm:w-56 sm:h-56 shrink-0 flex items-center justify-center rounded-full shadow-[0_10px_40px_rgba(0,0,0,0.1)]"
+                          style={pieStyle}
+                        >
+                          <div className="w-32 h-32 sm:w-36 sm:h-36 bg-[#F2F2F7] md:bg-white rounded-full flex flex-col items-center justify-center shadow-inner">
+                            <p className="text-xs font-bold text-gray-400 uppercase">
+                              Total
+                            </p>
+                            <p className="text-sm sm:text-base font-black text-gray-900 truncate max-w-[80px] sm:max-w-[100px]">
+                              Rp {(filteredTotalExpense / 1000).toFixed(0)}K
+                            </p>
+                          </div>
+                        </motion.div>
+                        <div className="w-full flex-1 space-y-3">
+                          {categoryList.map((cat, idx) => (
+                            <motion.div
+                              initial={{ opacity: 0, x: 20 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: idx * 0.05 }}
+                              key={idx}
+                              className="flex items-center gap-3 p-2 hover:bg-white/50 rounded-xl transition-colors"
+                            >
+                              <div
+                                className="w-3.5 h-3.5 rounded-full shadow-sm shrink-0"
+                                style={{ backgroundColor: cat.color }}
+                              ></div>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-bold text-sm text-gray-800 truncate">
+                                  {cat.name}
+                                </p>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className="font-bold text-sm text-gray-900 whitespace-nowrap">
+                                  Rp {cat.amount.toLocaleString("id-ID")}
+                                </p>
+                                <p className="text-[10px] font-bold text-gray-400">
+                                  {cat.percentage}%
+                                </p>
+                              </div>
+                            </motion.div>
+                          ))}
                         </div>
                       </div>
-                      <div className="w-full flex-1 space-y-3">
-                        {categoryList.map((cat, idx) => (
-                          <div
-                            key={idx}
-                            className="flex items-center gap-3 p-2 hover:bg-white/50 rounded-xl transition-colors"
-                          >
-                            <div
-                              className="w-3.5 h-3.5 rounded-full shadow-sm shrink-0"
-                              style={{ backgroundColor: cat.color }}
-                            ></div>
-                            <div className="flex-1 min-w-0">
-                              <p className="font-bold text-sm text-gray-800 truncate">
-                                {cat.name}
-                              </p>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <p className="font-bold text-sm text-gray-900 whitespace-nowrap">
-                                Rp {cat.amount.toLocaleString("id-ID")}
-                              </p>
-                              <p className="text-[10px] font-bold text-gray-400">
-                                {cat.percentage}%
-                              </p>
-                            </div>
-                          </div>
-                        ))}
+                    ) : (
+                      <div className="h-40 flex flex-col items-center justify-center opacity-50">
+                        <PieChart size={48} className="text-gray-300 mb-2" />
+                        <p className="text-sm font-semibold text-gray-500">
+                          Tidak ada pengeluaran di waktu ini
+                        </p>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="h-40 flex flex-col items-center justify-center opacity-50">
-                      <PieChart size={48} className="text-gray-300 mb-2" />
-                      <p className="text-sm font-semibold text-gray-500">
-                        Tidak ada pengeluaran di waktu ini
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* --- MENU RIWAYAT --- */}
-            {activeMenu === "history" && (
-              <div className="animate-in fade-in duration-500 space-y-4">
-                <div className="flex gap-2 mb-6">
-                  {/* Search Bar */}
-                  <div className="relative flex-1">
-                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                      <Search size={18} className="text-gray-400" />
-                    </div>
-                    <input
-                      type="text"
-                      placeholder="Cari..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-11 pr-4 py-3.5 bg-white/70 border border-white/60 backdrop-blur-xl rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium transition-all text-gray-800 placeholder-gray-400"
-                    />
-                    {searchQuery && (
-                      <button
-                        onClick={() => setSearchQuery("")}
-                        className="absolute inset-y-0 right-0 pr-4 flex items-center text-gray-400 hover:text-gray-600"
-                      >
-                        <X size={16} />
-                      </button>
                     )}
                   </div>
-                  {/* Sort Dropdown */}
-                  <select
-                    value={historySort}
-                    onChange={(e) => setHistorySort(e.target.value)}
-                    className="bg-white/70 border border-white/60 backdrop-blur-xl rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold text-gray-700 px-3 cursor-pointer"
-                  >
-                    <option value="newest">Terbaru</option>
-                    <option value="oldest">Terlama</option>
-                    <option value="a-z">A - Z</option>
-                    <option value="z-a">Z - A</option>
-                  </select>
-                </div>
+                </motion.div>
+              )}
 
-                <div>
-                  {sortedAndFilteredHistory.length === 0 ? (
-                    <p className="text-center text-gray-500 py-10">
-                      {searchQuery
-                        ? `Tidak ada hasil untuk "${searchQuery}"`
-                        : "Belum ada riwayat transaksi."}
-                    </p>
-                  ) : (
-                    sortedAndFilteredHistory.map((tx) => (
-                      <TransactionCard key={tx.id} tx={tx} />
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-
-            {activeMenu === "settings" && (
-              <div className="animate-in fade-in duration-500 space-y-6">
-                <div className="bg-white/60 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 shadow-sm flex items-center gap-6">
-                  <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center border-4 border-white shadow-sm overflow-hidden shrink-0">
-                    <img
-                      src={
-                        currentUser?.photoURL ||
-                        "https://api.dicebear.com/7.x/avataaars/svg?seed=Felix"
-                      }
-                      alt="User"
-                      referrerPolicy="no-referrer"
-                    />
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="text-2xl font-bold text-gray-900 truncate">
-                      {currentUser?.displayName || "Pengguna"}
-                    </h3>
-                    <p className="text-gray-500 truncate text-sm">
-                      {currentUser?.email}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="bg-white/60 border border-white/60 backdrop-blur-xl rounded-[2rem] p-6 shadow-sm">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="p-2 bg-purple-100 text-purple-600 rounded-xl">
-                      <Tags size={20} />
-                    </div>
-                    <h3 className="text-lg font-bold text-gray-900">
-                      Kategori Belanja
-                    </h3>
-                  </div>
-                  <div className="flex flex-wrap gap-2 mb-5">
-                    {categories.map((cat, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center gap-1.5 bg-white border border-gray-200 text-gray-700 pl-3 pr-1.5 py-1.5 rounded-xl text-sm font-bold shadow-sm"
-                      >
-                        <span>{cat}</span>
-                        {cat !== "Lainnya" && (
-                          <button
-                            onClick={() => handleDeleteCategory(cat)}
-                            className="text-gray-400 hover:text-red-500 p-1 rounded-md hover:bg-red-50 transition-colors"
-                          >
-                            <X size={14} />
-                          </button>
-                        )}
+              {/* --- KONTEN RIWAYAT --- */}
+              {activeMenu === "history" && (
+                <motion.div
+                  key="history"
+                  variants={tabVariants}
+                  initial="hidden"
+                  animate="enter"
+                  exit="exit"
+                  className="space-y-4"
+                >
+                  <div className="flex gap-2 mb-6">
+                    <div className="relative flex-1">
+                      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                        <Search size={18} className="text-gray-400" />
                       </div>
-                    ))}
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={newCategoryName}
-                      onChange={(e) => setNewCategoryName(e.target.value)}
-                      placeholder="Contoh: Bensin"
-                      className="flex-1 p-3 bg-white border border-gray-200 rounded-xl font-medium text-sm outline-none focus:ring-2 focus:ring-blue-500 transition-shadow min-w-0"
-                    />
-                    <button
-                      onClick={handleAddCategory}
-                      className="bg-blue-600 text-white px-5 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-sm shrink-0"
+                      <input
+                        type="text"
+                        placeholder="Cari..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-11 pr-4 py-3.5 bg-white/70 border border-white/60 backdrop-blur-xl rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium transition-all text-gray-800 placeholder-gray-400"
+                      />
+                      {searchQuery && (
+                        <button
+                          onClick={() => setSearchQuery("")}
+                          className="absolute inset-y-0 right-0 pr-4 flex items-center text-gray-400 hover:text-gray-600"
+                        >
+                          <X size={16} />
+                        </button>
+                      )}
+                    </div>
+                    <select
+                      value={historySort}
+                      onChange={(e) => setHistorySort(e.target.value)}
+                      className="bg-white/70 border border-white/60 backdrop-blur-xl rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-blue-500 text-sm font-bold text-gray-700 px-3 cursor-pointer"
                     >
-                      Tambah
-                    </button>
+                      <option value="newest">Terbaru</option>
+                      <option value="oldest">Terlama</option>
+                      <option value="a-z">A - Z</option>
+                      <option value="z-a">Z - A</option>
+                    </select>
                   </div>
-                </div>
+                  <div>
+                    {sortedAndFilteredHistory.length === 0 ? (
+                      <p className="text-center text-gray-500 py-10">
+                        {searchQuery
+                          ? `Tidak ada hasil untuk "${searchQuery}"`
+                          : "Belum ada riwayat transaksi."}
+                      </p>
+                    ) : (
+                      sortedAndFilteredHistory.map((tx) => (
+                        <TransactionCard key={tx.id} tx={tx} />
+                      ))
+                    )}
+                  </div>
+                </motion.div>
+              )}
 
-                <div className="bg-white/60 border border-white/60 backdrop-blur-xl rounded-[2rem] p-4 shadow-sm space-y-2">
-                  <button className="w-full flex items-center justify-between p-4 hover:bg-white/80 rounded-2xl transition-colors text-left">
-                    <div className="flex items-center gap-4">
-                      <div className="p-2 bg-blue-100 text-blue-600 rounded-xl">
-                        <Sparkles size={20} />
-                      </div>
-                      <span className="font-semibold text-gray-800">
-                        Ubah Kunci API Gemini
-                      </span>
+              {/* --- KONTEN PENGATURAN --- */}
+              {activeMenu === "settings" && (
+                <motion.div
+                  key="settings"
+                  variants={tabVariants}
+                  initial="hidden"
+                  animate="enter"
+                  exit="exit"
+                  className="space-y-6"
+                >
+                  <div className="bg-white/60 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 shadow-sm flex items-center gap-6">
+                    <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center border-4 border-white shadow-sm overflow-hidden shrink-0">
+                      <img
+                        src={
+                          currentUser?.photoURL ||
+                          "https://api.dicebear.com/7.x/avataaars/svg?seed=Felix"
+                        }
+                        alt="User"
+                        referrerPolicy="no-referrer"
+                      />
                     </div>
-                    <ChevronRight size={18} className="text-gray-400" />
-                  </button>
-                  <button
-                    onClick={handleLogout}
-                    className="w-full flex items-center justify-between p-4 hover:bg-gray-100 rounded-2xl transition-colors text-left border border-transparent mt-2"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="p-2 bg-gray-200 text-gray-700 rounded-xl">
-                        <LogOut size={20} />
-                      </div>
-                      <span className="font-semibold text-gray-700">
-                        Keluar (Log Out)
-                      </span>
+                    <div className="min-w-0">
+                      <h3 className="text-2xl font-bold text-gray-900 truncate">
+                        {currentUser?.displayName || "Pengguna"}
+                      </h3>
+                      <p className="text-gray-500 truncate text-sm">
+                        {currentUser?.email}
+                      </p>
                     </div>
-                  </button>
-                </div>
-              </div>
-            )}
+                  </div>
+                  <div className="bg-white/60 border border-white/60 backdrop-blur-xl rounded-[2rem] p-6 shadow-sm">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="p-2 bg-purple-100 text-purple-600 rounded-xl">
+                        <Tags size={20} />
+                      </div>
+                      <h3 className="text-lg font-bold text-gray-900">
+                        Kategori Belanja
+                      </h3>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mb-5">
+                      <AnimatePresence>
+                        {categories.map((cat, idx) => (
+                          <motion.div
+                            initial={{ opacity: 0, scale: 0.8 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.8 }}
+                            key={idx}
+                            className="flex items-center gap-1.5 bg-white border border-gray-200 text-gray-700 pl-3 pr-1.5 py-1.5 rounded-xl text-sm font-bold shadow-sm"
+                          >
+                            <span>{cat}</span>
+                            {cat !== "Lainnya" && (
+                              <button
+                                onClick={() => handleDeleteCategory(cat)}
+                                className="text-gray-400 hover:text-red-500 p-1 rounded-md hover:bg-red-50 transition-colors"
+                              >
+                                <X size={14} />
+                              </button>
+                            )}
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newCategoryName}
+                        onChange={(e) => setNewCategoryName(e.target.value)}
+                        placeholder="Contoh: Bensin"
+                        className="flex-1 p-3 bg-white border border-gray-200 rounded-xl font-medium text-sm outline-none focus:ring-2 focus:ring-blue-500 transition-shadow min-w-0"
+                      />
+                      <motion.button
+                        whileTap={{ scale: 0.95 }}
+                        onClick={handleAddCategory}
+                        className="bg-blue-600 text-white px-5 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-sm shrink-0"
+                      >
+                        Tambah
+                      </motion.button>
+                    </div>
+                  </div>
+                  <div className="bg-white/60 border border-white/60 backdrop-blur-xl rounded-[2rem] p-4 shadow-sm space-y-2">
+                    <motion.button
+                      whileTap={{ scale: 0.98 }}
+                      className="w-full flex items-center justify-between p-4 hover:bg-white/80 rounded-2xl transition-colors text-left"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="p-2 bg-blue-100 text-blue-600 rounded-xl">
+                          <Sparkles size={20} />
+                        </div>
+                        <span className="font-semibold text-gray-800">
+                          Ubah Kunci API Gemini
+                        </span>
+                      </div>
+                      <ChevronRight size={18} className="text-gray-400" />
+                    </motion.button>
+                    <motion.button
+                      whileTap={{ scale: 0.98 }}
+                      onClick={handleLogout}
+                      className="w-full flex items-center justify-between p-4 hover:bg-gray-100 rounded-2xl transition-colors text-left border border-transparent mt-2"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="p-2 bg-gray-200 text-gray-700 rounded-xl">
+                          <LogOut size={20} />
+                        </div>
+                        <span className="font-semibold text-gray-700">
+                          Keluar (Log Out)
+                        </span>
+                      </div>
+                    </motion.button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </main>
 
         <div className="md:hidden fixed bottom-6 left-6 right-6 z-30">
           <nav className="bg-white/80 backdrop-blur-2xl border border-white/60 rounded-[2rem] shadow-[0_20px_40px_rgba(0,0,0,0.12)] px-4 py-2 relative flex items-center justify-between">
             <div className="flex w-2/5 justify-around">
-              <button
+              <motion.button
+                whileTap={{ scale: 0.8 }}
                 onClick={() => setActiveMenu("home")}
                 className={`p-2 transition-colors ${activeMenu === "home" ? "text-blue-600" : "text-gray-400"}`}
               >
                 <Home size={24} strokeWidth={activeMenu === "home" ? 2.5 : 2} />
-              </button>
-              <button
+              </motion.button>
+              <motion.button
+                whileTap={{ scale: 0.8 }}
                 onClick={() => setActiveMenu("chart")}
                 className={`p-2 transition-colors ${activeMenu === "chart" ? "text-blue-600" : "text-gray-400"}`}
               >
@@ -1334,18 +1587,21 @@ function App() {
                   size={24}
                   strokeWidth={activeMenu === "chart" ? 2.5 : 2}
                 />
-              </button>
+              </motion.button>
             </div>
             <div className="relative w-1/5 flex justify-center">
-              <button
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.9 }}
                 onClick={() => setShowActionSheet(true)}
-                className="absolute -top-10 w-16 h-16 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-full flex items-center justify-center shadow-[0_10px_25px_rgba(59,130,246,0.5)] border-4 border-[#F2F2F7] text-white hover:scale-105 active:scale-95 transition-transform"
+                className="absolute -top-10 w-16 h-16 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-full flex items-center justify-center shadow-[0_10px_25px_rgba(59,130,246,0.5)] border-4 border-[#F2F2F7] text-white"
               >
                 <Plus size={32} strokeWidth={2.5} />
-              </button>
+              </motion.button>
             </div>
             <div className="flex w-2/5 justify-around">
-              <button
+              <motion.button
+                whileTap={{ scale: 0.8 }}
                 onClick={() => setActiveMenu("history")}
                 className={`p-2 transition-colors ${activeMenu === "history" ? "text-blue-600" : "text-gray-400"}`}
               >
@@ -1353,8 +1609,9 @@ function App() {
                   size={24}
                   strokeWidth={activeMenu === "history" ? 2.5 : 2}
                 />
-              </button>
-              <button
+              </motion.button>
+              <motion.button
+                whileTap={{ scale: 0.8 }}
                 onClick={() => setActiveMenu("settings")}
                 className={`p-2 transition-colors ${activeMenu === "settings" ? "text-blue-600" : "text-gray-400"}`}
               >
@@ -1362,463 +1619,523 @@ function App() {
                   size={24}
                   strokeWidth={activeMenu === "settings" ? 2.5 : 2}
                 />
-              </button>
+              </motion.button>
             </div>
           </nav>
         </div>
 
-        {showActionSheet && (
-          <div className="absolute inset-0 z-50 flex items-end md:items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
-            <div
-              className="absolute inset-0"
-              onClick={() => setShowActionSheet(false)}
-            ></div>
-            <div className="w-full md:max-w-md bg-white/95 backdrop-blur-2xl md:rounded-[2.5rem] rounded-t-[2.5rem] p-6 pb-12 md:pb-6 shadow-2xl relative animate-in slide-in-from-bottom-10 md:zoom-in-95 duration-300">
-              <div className="w-12 h-1.5 bg-gray-200 rounded-full mx-auto mb-6 md:hidden"></div>
-              <h3 className="text-xl font-bold text-gray-900 mb-5 text-center">
-                Tambah Transaksi
-              </h3>
-              <div className="space-y-3">
-                <button
-                  onClick={() => cameraInputRef.current.click()}
-                  className="w-full flex items-center gap-4 p-4 bg-gray-50 border border-gray-100 rounded-2xl text-left"
-                >
-                  <div className="p-3 bg-blue-100 text-blue-600 rounded-xl">
-                    <Camera size={24} />
-                  </div>
-                  <div>
-                    <p className="font-bold text-gray-900 text-base">
-                      Scan Kamera
-                    </p>
-                    <p className="text-sm text-gray-500">
-                      Auto-ekstrak dengan AI
-                    </p>
-                  </div>
-                </button>
-                <button
-                  onClick={() => galleryInputRef.current.click()}
-                  className="w-full flex items-center gap-4 p-4 bg-gray-50 border border-gray-100 rounded-2xl text-left"
-                >
-                  <div className="p-3 bg-purple-100 text-purple-600 rounded-xl">
-                    <ImageIcon size={24} />
-                  </div>
-                  <div>
-                    <p className="font-bold text-gray-900 text-base">
-                      Upload Galeri
-                    </p>
-                    <p className="text-sm text-gray-500">
-                      Pilih foto struk dari HP
-                    </p>
-                  </div>
-                </button>
-                <button
-                  onClick={() => {
-                    setShowActionSheet(false);
-                    setShowManualInput(true);
-                  }}
-                  className="w-full flex items-center gap-4 p-4 bg-gray-50 border border-gray-100 rounded-2xl text-left"
-                >
-                  <div className="p-3 bg-orange-100 text-orange-600 rounded-xl">
-                    <Pencil size={24} />
-                  </div>
-                  <div>
-                    <p className="font-bold text-gray-900 text-base">
-                      Input Manual
-                    </p>
-                    <p className="text-sm text-gray-500">
-                      Tulis Pemasukan/Pengeluaran
-                    </p>
-                  </div>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {showManualInput && (
-          <div className="absolute inset-0 z-50 flex items-end md:items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200 md:p-4">
-            <div
-              className="absolute inset-0"
-              onClick={() => setShowManualInput(false)}
-            ></div>
-            <div className="w-full md:max-w-md bg-white rounded-t-[2.5rem] md:rounded-[2.5rem] p-6 shadow-2xl relative animate-in slide-in-from-bottom-10 md:zoom-in-95 duration-300">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-2xl font-bold text-gray-900">
-                  Catat Manual
-                </h3>
-                <button
-                  onClick={() => setShowManualInput(false)}
-                  className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200"
-                >
-                  <X size={24} />
-                </button>
-              </div>
-              <div className="flex p-1.5 bg-gray-100 rounded-xl mb-6">
-                <button
-                  onClick={() =>
-                    setManualData({ ...manualData, type: "expense" })
-                  }
-                  className={`flex-1 py-2.5 text-base font-bold rounded-lg transition-colors ${manualData.type === "expense" ? "bg-white shadow text-red-600" : "text-gray-500"}`}
-                >
-                  Pengeluaran
-                </button>
-                <button
-                  onClick={() =>
-                    setManualData({ ...manualData, type: "income" })
-                  }
-                  className={`flex-1 py-2.5 text-base font-bold rounded-lg transition-colors ${manualData.type === "income" ? "bg-white shadow text-green-600" : "text-gray-500"}`}
-                >
-                  Pemasukan
-                </button>
-              </div>
-              <div className="space-y-5">
-                <div>
-                  <label className="text-sm font-semibold text-gray-500 ml-1">
-                    Nominal (Rp)
-                  </label>
-                  <input
-                    type="number"
-                    value={manualData.amount}
-                    onChange={(e) =>
-                      setManualData({ ...manualData, amount: e.target.value })
-                    }
-                    placeholder="Contoh: 50000"
-                    className="w-full mt-1.5 p-4 bg-gray-50 border border-gray-200 rounded-xl font-bold text-xl focus:ring-2 focus:ring-blue-500 outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-semibold text-gray-500 ml-1">
-                    Keterangan Barang/Pemasukan
-                  </label>
-                  <input
-                    type="text"
-                    value={manualData.store}
-                    onChange={(e) =>
-                      setManualData({ ...manualData, store: e.target.value })
-                    }
-                    placeholder="Contoh: Bensin Motor"
-                    className="w-full mt-1.5 p-4 bg-gray-50 border border-gray-200 rounded-xl font-semibold text-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-semibold text-gray-500 ml-1">
-                    Kategori Barang
-                  </label>
-                  <select
-                    value={manualData.category}
-                    onChange={(e) =>
-                      setManualData({ ...manualData, category: e.target.value })
-                    }
-                    className="w-full mt-1.5 p-4 bg-gray-50 border border-gray-200 rounded-xl font-semibold text-lg outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    {categories.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <button
-                onClick={handleSaveManual}
-                className="w-full mt-8 py-4 bg-blue-600 text-white rounded-xl font-bold text-lg shadow-lg shadow-blue-500/30 active:scale-95 transition-transform"
+        {/* --- MODAL BERANIMASI --- */}
+        <AnimatePresence>
+          {showActionSheet && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-50 flex items-end md:items-center justify-center bg-black/40 backdrop-blur-sm"
+            >
+              <div
+                className="absolute inset-0"
+                onClick={() => setShowActionSheet(false)}
+              ></div>
+              <motion.div
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="w-full md:max-w-md bg-white/95 backdrop-blur-2xl md:rounded-[2.5rem] rounded-t-[2.5rem] p-6 pb-12 md:pb-6 shadow-2xl relative"
               >
-                Simpan Data
-              </button>
-            </div>
-          </div>
-        )}
-
-        {imagePreview && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center p-4 md:p-8 bg-black/60 backdrop-blur-md animate-in fade-in duration-200">
-            <div className="w-full max-w-sm sm:max-w-md bg-white/90 backdrop-blur-2xl border border-white/60 p-6 rounded-[2.5rem] shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold text-gray-900">
-                  Konfirmasi Struk
+                <div className="w-12 h-1.5 bg-gray-200 rounded-full mx-auto mb-6 md:hidden"></div>
+                <h3 className="text-xl font-bold text-gray-900 mb-5 text-center">
+                  Tambah Transaksi
                 </h3>
-                <button
-                  onClick={() => setImagePreview(null)}
-                  className="w-8 h-8 bg-gray-200/50 rounded-full flex items-center justify-center text-gray-600"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-              <div className="flex-1 overflow-hidden rounded-[1.5rem] bg-gray-100 border border-gray-200/50 relative mb-6 flex justify-center items-center min-h-[300px]">
-                <img
-                  src={imagePreview}
-                  className="max-w-full max-h-[50vh] object-contain rounded-[1rem]"
-                />
-              </div>
-              <button
-                onClick={handleProcessAI}
-                className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-bold shadow-lg"
-                disabled={isProcessing}
-              >
-                {isProcessing
-                  ? "Menganalisis dengan AI..."
-                  : "Ekstrak Data Sekarang"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* MODAL 4: DETAIL TRANSAKSI & EDIT */}
-        {selectedTransaction && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center p-3 md:p-8 bg-black/60 backdrop-blur-md animate-in fade-in duration-200">
-            <div
-              className="absolute inset-0"
-              onClick={isEditing ? () => setIsEditing(false) : closePopup}
-            ></div>
-            <div className="w-full max-w-[22rem] sm:max-w-sm bg-white/95 backdrop-blur-3xl border border-white/50 rounded-[2rem] p-5 sm:p-6 shadow-2xl relative animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]">
-              <div className="absolute top-5 right-5 flex gap-2">
-                {!isEditing && (
-                  <button
-                    onClick={() => handleDelete(selectedTransaction.id)}
-                    className="p-2 bg-red-50 text-red-500 rounded-full hover:bg-red-100"
+                <div className="space-y-3">
+                  <motion.button
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => cameraInputRef.current.click()}
+                    className="w-full flex items-center gap-4 p-4 bg-gray-50 border border-gray-100 rounded-2xl text-left"
                   >
-                    <Trash2 size={18} />
-                  </button>
-                )}
-                {!isEditing ? (
-                  <button
-                    onClick={startEditing}
-                    className="p-2 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100"
+                    <div className="p-3 bg-blue-100 text-blue-600 rounded-xl">
+                      <Camera size={24} />
+                    </div>
+                    <div>
+                      <p className="font-bold text-gray-900 text-base">
+                        Scan Kamera
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        Auto-ekstrak dengan AI
+                      </p>
+                    </div>
+                  </motion.button>
+                  <motion.button
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => galleryInputRef.current.click()}
+                    className="w-full flex items-center gap-4 p-4 bg-gray-50 border border-gray-100 rounded-2xl text-left"
                   >
-                    <Pencil size={18} />
-                  </button>
-                ) : (
-                  <button
-                    onClick={saveEdit}
-                    className="p-2 bg-green-50 text-green-600 rounded-full hover:bg-green-100"
+                    <div className="p-3 bg-purple-100 text-purple-600 rounded-xl">
+                      <ImageIcon size={24} />
+                    </div>
+                    <div>
+                      <p className="font-bold text-gray-900 text-base">
+                        Upload Galeri
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        Pilih foto struk dari HP
+                      </p>
+                    </div>
+                  </motion.button>
+                  <motion.button
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => {
+                      setShowActionSheet(false);
+                      setShowManualInput(true);
+                    }}
+                    className="w-full flex items-center gap-4 p-4 bg-gray-50 border border-gray-100 rounded-2xl text-left"
                   >
-                    <Check size={18} strokeWidth={3} />
-                  </button>
-                )}
-              </div>
-
-              <div className="text-center mb-4 mt-2 px-6 flex flex-col items-center">
-                <div
-                  className={`w-12 h-12 text-2xl rounded-2xl flex items-center justify-center mx-auto mb-2 ${selectedTransaction.type === "income" ? "bg-green-100" : "bg-gray-100"}`}
-                >
-                  {isEditing ? editData.icon : selectedTransaction.icon}
+                    <div className="p-3 bg-orange-100 text-orange-600 rounded-xl">
+                      <Pencil size={24} />
+                    </div>
+                    <div>
+                      <p className="font-bold text-gray-900 text-base">
+                        Input Manual
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        Tulis Pemasukan/Pengeluaran
+                      </p>
+                    </div>
+                  </motion.button>
                 </div>
-                {isEditing ? (
-                  <div className="w-full space-y-2">
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {showManualInput && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-50 flex items-end md:items-center justify-center bg-black/40 backdrop-blur-sm md:p-4"
+            >
+              <div
+                className="absolute inset-0"
+                onClick={() => setShowManualInput(false)}
+              ></div>
+              <motion.div
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="w-full md:max-w-md bg-white rounded-t-[2.5rem] md:rounded-[2.5rem] p-6 shadow-2xl relative"
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-2xl font-bold text-gray-900">
+                    Catat Manual
+                  </h3>
+                  <button
+                    onClick={() => setShowManualInput(false)}
+                    className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+                <div className="flex p-1.5 bg-gray-100 rounded-xl mb-6">
+                  <button
+                    onClick={() =>
+                      setManualData({ ...manualData, type: "expense" })
+                    }
+                    className={`flex-1 py-2.5 text-base font-bold rounded-lg transition-colors ${manualData.type === "expense" ? "bg-white shadow text-red-600" : "text-gray-500"}`}
+                  >
+                    Pengeluaran
+                  </button>
+                  <button
+                    onClick={() =>
+                      setManualData({ ...manualData, type: "income" })
+                    }
+                    className={`flex-1 py-2.5 text-base font-bold rounded-lg transition-colors ${manualData.type === "income" ? "bg-white shadow text-green-600" : "text-gray-500"}`}
+                  >
+                    Pemasukan
+                  </button>
+                </div>
+                <div className="space-y-5">
+                  <div>
+                    <label className="text-sm font-semibold text-gray-500 ml-1">
+                      Nominal (Rp)
+                    </label>
+                    <input
+                      type="number"
+                      value={manualData.amount}
+                      onChange={(e) =>
+                        setManualData({ ...manualData, amount: e.target.value })
+                      }
+                      placeholder="Contoh: 50000"
+                      className="w-full mt-1.5 p-4 bg-gray-50 border border-gray-200 rounded-xl font-bold text-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-semibold text-gray-500 ml-1">
+                      Keterangan Barang/Pemasukan
+                    </label>
                     <input
                       type="text"
-                      value={editData.store}
+                      value={manualData.store}
                       onChange={(e) =>
-                        setEditData({ ...editData, store: e.target.value })
+                        setManualData({ ...manualData, store: e.target.value })
                       }
-                      className="w-full text-center font-bold text-xl bg-gray-50 border border-gray-200 rounded-xl p-1.5 outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <input
-                      type="datetime-local"
-                      value={
-                        editData.timestamp
-                          ? new Date(
-                              editData.timestamp -
-                                new Date().getTimezoneOffset() * 60000,
-                            )
-                              .toISOString()
-                              .slice(0, 16)
-                          : ""
-                      }
-                      onChange={(e) => {
-                        const d = new Date(e.target.value);
-                        setEditData({
-                          ...editData,
-                          timestamp: d.getTime(),
-                          date: d
-                            .toLocaleDateString("id-ID", {
-                              day: "2-digit",
-                              month: "short",
-                              year: "numeric",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })
-                            .replace(/\./g, ":"),
-                        });
-                      }}
-                      className="w-full text-center text-xs font-semibold text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-1.5 outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Contoh: Bensin Motor"
+                      className="w-full mt-1.5 p-4 bg-gray-50 border border-gray-200 rounded-xl font-semibold text-lg focus:ring-2 focus:ring-blue-500 outline-none"
                     />
                   </div>
-                ) : (
-                  <>
-                    <h3 className="font-bold text-xl text-gray-900 leading-tight w-full break-words px-2">
-                      {selectedTransaction.store}
-                    </h3>
-                    <p className="text-xs text-gray-400 mt-1">
-                      {selectedTransaction.date}
-                    </p>
-                  </>
-                )}
-              </div>
+                  <div>
+                    <label className="text-sm font-semibold text-gray-500 ml-1">
+                      Kategori Barang
+                    </label>
+                    <select
+                      value={manualData.category}
+                      onChange={(e) =>
+                        setManualData({
+                          ...manualData,
+                          category: e.target.value,
+                        })
+                      }
+                      className="w-full mt-1.5 p-4 bg-gray-50 border border-gray-200 rounded-xl font-semibold text-lg outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {categories.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={handleSaveManual}
+                  className="w-full mt-8 py-4 bg-blue-600 text-white rounded-xl font-bold text-lg shadow-lg shadow-blue-500/30"
+                >
+                  Simpan Data
+                </motion.button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-              {selectedTransaction.items &&
-                selectedTransaction.items.length > 0 && (
-                  <>
-                    <div className="my-3 border-t-2 border-dashed border-gray-200 shrink-0"></div>
-                    <div className="flex-1 overflow-y-auto pr-1 space-y-3 no-scrollbar min-h-0">
-                      {isEditing
-                        ? editData.items.map((item, index) => (
-                            <div
-                              key={index}
-                              className="bg-white p-3 rounded-2xl space-y-2.5 border border-gray-200 relative pr-9 shadow-sm"
-                            >
-                              <button
-                                onClick={() => handleDeleteItem(index)}
-                                className="absolute top-3.5 right-2 p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors"
-                                title="Hapus"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                              <input
-                                type="text"
-                                value={item.name}
-                                onChange={(e) =>
-                                  handleItemChange(
-                                    index,
-                                    "name",
-                                    e.target.value,
-                                  )
-                                }
-                                className="w-full text-sm font-bold text-gray-800 border border-gray-200 rounded-xl p-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                              />
-                              <select
-                                value={item.category || categories[7]}
-                                onChange={(e) =>
-                                  handleItemChange(
-                                    index,
-                                    "category",
-                                    e.target.value,
-                                  )
-                                }
-                                className="w-full text-xs font-semibold text-blue-600 border border-gray-200 rounded-xl p-2 outline-none bg-white focus:border-blue-500"
-                              >
-                                {categories.map((cat) => (
-                                  <option key={cat} value={cat}>
-                                    {cat}
-                                  </option>
-                                ))}
-                              </select>
-                              <div className="flex gap-2">
-                                <div className="relative">
-                                  <span className="absolute left-2.5 top-2 text-gray-400 text-xs font-bold">
-                                    x
-                                  </span>
-                                  <input
-                                    type="number"
-                                    value={item.qty}
-                                    onChange={(e) =>
-                                      handleItemChange(
-                                        index,
-                                        "qty",
-                                        e.target.value,
-                                      )
-                                    }
-                                    className="w-14 pl-6 pr-1 py-2 text-sm font-semibold border border-gray-200 rounded-xl outline-none text-center min-w-0"
-                                  />
-                                </div>
-                                <div className="relative flex-1 min-w-0">
-                                  <span className="absolute left-2.5 top-2 text-gray-400 text-xs font-bold">
-                                    Rp
-                                  </span>
-                                  <input
-                                    type="number"
-                                    value={item.price}
-                                    onChange={(e) =>
-                                      handleItemChange(
-                                        index,
-                                        "price",
-                                        e.target.value,
-                                      )
-                                    }
-                                    className="w-full pl-8 pr-2 py-2 text-sm font-semibold border border-gray-200 rounded-xl outline-none"
-                                  />
-                                </div>
-                              </div>
-                            </div>
-                          ))
-                        : selectedTransaction.items?.map((item, index) => (
-                            <div
-                              key={index}
-                              className="flex justify-between items-start gap-2"
-                            >
-                              <div className="flex-1 min-w-0 pr-2">
-                                <p className="font-semibold text-gray-800 text-sm break-words leading-tight">
-                                  {item.name}
-                                </p>
-                                <div className="mt-1.5">
-                                  <span className="text-[9px] bg-gray-200 text-gray-600 font-bold px-2 py-0.5 rounded uppercase">
-                                    {item.category || "Lainnya"}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="text-right shrink-0">
-                                <p className="font-bold text-gray-900 text-sm whitespace-nowrap">
-                                  Rp{" "}
-                                  {(
-                                    (Number(item.qty) || 1) *
-                                    (Number(item.price) || 0)
-                                  ).toLocaleString("id-ID")}
-                                </p>
-                                {Number(item.qty) > 1 && (
-                                  <p className="text-[11px] text-gray-500 whitespace-nowrap mt-0.5">
-                                    {item.qty} x Rp{" "}
-                                    {(Number(item.price) || 0).toLocaleString(
-                                      "id-ID",
-                                    )}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                    </div>
-                  </>
-                )}
-
-              <div className="my-4 border-t-2 border-dashed border-gray-200 shrink-0"></div>
-              <div className="flex justify-between items-end mt-1 shrink-0 gap-2">
-                <span className="text-base font-bold text-gray-900 shrink-0">
-                  Total Harga
-                </span>
-                {isEditing ? (
-                  <input
-                    type="number"
-                    value={Math.abs(editData.amount)}
-                    onChange={(e) =>
-                      setEditData({
-                        ...editData,
-                        amount:
-                          editData.type === "income"
-                            ? Math.abs(e.target.value)
-                            : -Math.abs(e.target.value),
-                      })
-                    }
-                    className={`text-lg font-black bg-gray-50 border border-gray-200 rounded-xl p-1.5 w-32 min-w-0 text-right outline-none focus:ring-2 focus:ring-blue-500 ${editData.type === "income" ? "text-green-600" : "text-blue-600"}`}
-                  />
-                ) : (
-                  <span
-                    className={`text-2xl font-black shrink-0 whitespace-nowrap ${selectedTransaction.type === "income" ? "text-green-600" : "text-rose-600"}`}
-                  >
-                    {selectedTransaction.type === "income" ? "+" : "-"}Rp{" "}
-                    {Math.abs(selectedTransaction.amount).toLocaleString(
-                      "id-ID",
-                    )}
-                  </span>
-                )}
-              </div>
-
-              <button
-                onClick={isEditing ? () => setIsEditing(false) : closePopup}
-                className={`w-full mt-6 py-3 rounded-xl font-bold text-base transition-colors shrink-0 ${isEditing ? "bg-red-50 text-red-600 hover:bg-red-100" : "bg-gray-100 text-gray-800 hover:bg-gray-200"}`}
+        <AnimatePresence>
+          {imagePreview && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-50 flex items-center justify-center p-4 md:p-8 bg-black/60 backdrop-blur-md"
+            >
+              <motion.div
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                className="w-full max-w-sm sm:max-w-md bg-white/90 backdrop-blur-2xl border border-white/60 p-6 rounded-[2.5rem] shadow-2xl flex flex-col max-h-[90vh]"
               >
-                {isEditing ? "Batal Edit" : "Tutup Detail"}
-              </button>
-            </div>
-          </div>
-        )}
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xl font-bold text-gray-900">
+                    Konfirmasi Struk
+                  </h3>
+                  <button
+                    onClick={() => setImagePreview(null)}
+                    className="w-8 h-8 bg-gray-200/50 rounded-full flex items-center justify-center text-gray-600"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-hidden rounded-[1.5rem] bg-gray-100 border border-gray-200/50 relative mb-6 flex justify-center items-center min-h-[300px]">
+                  <img
+                    src={imagePreview}
+                    className="max-w-full max-h-[50vh] object-contain rounded-[1rem]"
+                  />
+                </div>
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={handleProcessAI}
+                  className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-bold shadow-lg"
+                  disabled={isProcessing}
+                >
+                  {isProcessing
+                    ? "Menganalisis dengan AI..."
+                    : "Ekstrak Data Sekarang"}
+                </motion.button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {selectedTransaction && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-50 flex items-center justify-center p-3 md:p-8 bg-black/60 backdrop-blur-md"
+            >
+              <div
+                className="absolute inset-0"
+                onClick={isEditing ? () => setIsEditing(false) : closePopup}
+              ></div>
+              <motion.div
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                className="w-full max-w-[22rem] sm:max-w-sm bg-white/95 backdrop-blur-3xl border border-white/50 rounded-[2rem] p-5 sm:p-6 shadow-2xl relative flex flex-col max-h-[90vh]"
+              >
+                <div className="absolute top-5 right-5 flex gap-2">
+                  {!isEditing && (
+                    <motion.button
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => handleDelete(selectedTransaction.id)}
+                      className="p-2 bg-red-50 text-red-500 rounded-full hover:bg-red-100"
+                    >
+                      <Trash2 size={18} />
+                    </motion.button>
+                  )}
+                  {!isEditing ? (
+                    <motion.button
+                      whileTap={{ scale: 0.9 }}
+                      onClick={startEditing}
+                      className="p-2 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100"
+                    >
+                      <Pencil size={18} />
+                    </motion.button>
+                  ) : (
+                    <motion.button
+                      whileTap={{ scale: 0.9 }}
+                      onClick={saveEdit}
+                      className="p-2 bg-green-50 text-green-600 rounded-full hover:bg-green-100"
+                    >
+                      <Check size={18} strokeWidth={3} />
+                    </motion.button>
+                  )}
+                </div>
+                <div className="text-center mb-4 mt-2 px-6 flex flex-col items-center">
+                  <div
+                    className={`w-12 h-12 text-2xl rounded-2xl flex items-center justify-center mx-auto mb-2 ${selectedTransaction.type === "income" ? "bg-green-100" : "bg-gray-100"}`}
+                  >
+                    {isEditing ? editData.icon : selectedTransaction.icon}
+                  </div>
+                  {isEditing ? (
+                    <div className="w-full space-y-2">
+                      <input
+                        type="text"
+                        value={editData.store}
+                        onChange={(e) =>
+                          setEditData({ ...editData, store: e.target.value })
+                        }
+                        className="w-full text-center font-bold text-xl bg-gray-50 border border-gray-200 rounded-xl p-1.5 outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <input
+                        type="datetime-local"
+                        value={
+                          editData.timestamp
+                            ? new Date(
+                                editData.timestamp -
+                                  new Date().getTimezoneOffset() * 60000,
+                              )
+                                .toISOString()
+                                .slice(0, 16)
+                            : ""
+                        }
+                        onChange={(e) => {
+                          const d = new Date(e.target.value);
+                          setEditData({
+                            ...editData,
+                            timestamp: d.getTime(),
+                            date: d
+                              .toLocaleDateString("id-ID", {
+                                day: "2-digit",
+                                month: "short",
+                                year: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })
+                              .replace(/\./g, ":"),
+                          });
+                        }}
+                        className="w-full text-center text-xs font-semibold text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-1.5 outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <h3 className="font-bold text-xl text-gray-900 leading-tight w-full break-words px-2">
+                        {selectedTransaction.store}
+                      </h3>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {selectedTransaction.date}
+                      </p>
+                    </>
+                  )}
+                </div>
+                {selectedTransaction.items &&
+                  selectedTransaction.items.length > 0 && (
+                    <>
+                      <div className="my-3 border-t-2 border-dashed border-gray-200 shrink-0"></div>
+                      <div className="flex-1 overflow-y-auto pr-1 space-y-3 no-scrollbar min-h-0">
+                        {isEditing
+                          ? editData.items.map((item, index) => (
+                              <div
+                                key={index}
+                                className="bg-white p-3 rounded-2xl space-y-2.5 border border-gray-200 relative pr-9 shadow-sm"
+                              >
+                                <button
+                                  onClick={() => handleDeleteItem(index)}
+                                  className="absolute top-3.5 right-2 p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                                  title="Hapus"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                                <input
+                                  type="text"
+                                  value={item.name}
+                                  onChange={(e) =>
+                                    handleItemChange(
+                                      index,
+                                      "name",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className="w-full text-sm font-bold text-gray-800 border border-gray-200 rounded-xl p-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                />
+                                <select
+                                  value={item.category || categories[7]}
+                                  onChange={(e) =>
+                                    handleItemChange(
+                                      index,
+                                      "category",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className="w-full text-xs font-semibold text-blue-600 border border-gray-200 rounded-xl p-2 outline-none bg-white focus:border-blue-500"
+                                >
+                                  {categories.map((cat) => (
+                                    <option key={cat} value={cat}>
+                                      {cat}
+                                    </option>
+                                  ))}
+                                </select>
+                                <div className="flex gap-2">
+                                  <div className="relative">
+                                    <span className="absolute left-2.5 top-2 text-gray-400 text-xs font-bold">
+                                      x
+                                    </span>
+                                    <input
+                                      type="number"
+                                      value={item.qty}
+                                      onChange={(e) =>
+                                        handleItemChange(
+                                          index,
+                                          "qty",
+                                          e.target.value,
+                                        )
+                                      }
+                                      className="w-14 pl-6 pr-1 py-2 text-sm font-semibold border border-gray-200 rounded-xl outline-none text-center min-w-0"
+                                    />
+                                  </div>
+                                  <div className="relative flex-1 min-w-0">
+                                    <span className="absolute left-2.5 top-2 text-gray-400 text-xs font-bold">
+                                      Rp
+                                    </span>
+                                    <input
+                                      type="number"
+                                      value={item.price}
+                                      onChange={(e) =>
+                                        handleItemChange(
+                                          index,
+                                          "price",
+                                          e.target.value,
+                                        )
+                                      }
+                                      className="w-full pl-8 pr-2 py-2 text-sm font-semibold border border-gray-200 rounded-xl outline-none"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          : selectedTransaction.items?.map((item, index) => (
+                              <div
+                                key={index}
+                                className="flex justify-between items-start gap-2"
+                              >
+                                <div className="flex-1 min-w-0 pr-2">
+                                  <p className="font-semibold text-gray-800 text-sm break-words leading-tight">
+                                    {item.name}
+                                  </p>
+                                  <div className="mt-1.5">
+                                    <span className="text-[9px] bg-gray-200 text-gray-600 font-bold px-2 py-0.5 rounded uppercase">
+                                      {item.category || "Lainnya"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className="font-bold text-gray-900 text-sm whitespace-nowrap">
+                                    Rp{" "}
+                                    {(
+                                      (Number(item.qty) || 1) *
+                                      (Number(item.price) || 0)
+                                    ).toLocaleString("id-ID")}
+                                  </p>
+                                  {Number(item.qty) > 1 && (
+                                    <p className="text-[11px] text-gray-500 whitespace-nowrap mt-0.5">
+                                      {item.qty} x Rp{" "}
+                                      {(Number(item.price) || 0).toLocaleString(
+                                        "id-ID",
+                                      )}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                      </div>
+                    </>
+                  )}
+                <div className="my-4 border-t-2 border-dashed border-gray-200 shrink-0"></div>
+                <div className="flex justify-between items-end mt-1 shrink-0 gap-2">
+                  <span className="text-base font-bold text-gray-900 shrink-0">
+                    Total Harga
+                  </span>
+                  {isEditing ? (
+                    <input
+                      type="number"
+                      value={Math.abs(editData.amount)}
+                      onChange={(e) =>
+                        setEditData({
+                          ...editData,
+                          amount:
+                            editData.type === "income"
+                              ? Math.abs(e.target.value)
+                              : -Math.abs(e.target.value),
+                        })
+                      }
+                      className={`text-lg font-black bg-gray-50 border border-gray-200 rounded-xl p-1.5 w-32 min-w-0 text-right outline-none focus:ring-2 focus:ring-blue-500 ${editData.type === "income" ? "text-green-600" : "text-blue-600"}`}
+                    />
+                  ) : (
+                    <span
+                      className={`text-2xl font-black shrink-0 whitespace-nowrap ${selectedTransaction.type === "income" ? "text-green-600" : "text-rose-600"}`}
+                    >
+                      {selectedTransaction.type === "income" ? "+" : "-"}Rp{" "}
+                      {Math.abs(selectedTransaction.amount).toLocaleString(
+                        "id-ID",
+                      )}
+                    </span>
+                  )}
+                </div>
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={isEditing ? () => setIsEditing(false) : closePopup}
+                  className={`w-full mt-6 py-3 rounded-xl font-bold text-base transition-colors shrink-0 ${isEditing ? "bg-red-50 text-red-600 hover:bg-red-100" : "bg-gray-100 text-gray-800 hover:bg-gray-200"}`}
+                >
+                  {isEditing ? "Batal Edit" : "Tutup Detail"}
+                </motion.button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
