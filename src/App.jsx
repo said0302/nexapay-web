@@ -252,14 +252,12 @@ function App() {
   const currentBalance = totalIncome - totalExpense;
 
   const now = new Date();
-  const currentDayOfMonth = now.getDate();
-  const currentMonthNumber = now.getMonth() + 1;
   const expenseTransactions = transactions.filter((t) => t.type === "expense");
 
+  // --- LOGIKA MINI CHART BERANDA (Total, BUKAN Rata-rata) ---
   const getHomeChartData = () => {
     let data = [];
-    let avg = 0;
-    let labelAvg = "";
+    let total = 0; // Menggunakan Total
 
     if (homeChartFilter === "Mingguan") {
       data = [
@@ -271,7 +269,6 @@ function App() {
         { label: "Sab", val: 0 },
         { label: "Min", val: 0 },
       ];
-      let total = 0;
       expenseTransactions.forEach((tx) => {
         const txDate = getValidDate(tx);
         const diffTime = Math.abs(now - txDate);
@@ -283,8 +280,6 @@ function App() {
           total += Math.abs(tx.amount);
         }
       });
-      avg = total / 7;
-      labelAvg = "/hari";
     } else if (homeChartFilter === "Bulanan") {
       data = [
         { label: "Mg1", val: 0 },
@@ -292,7 +287,6 @@ function App() {
         { label: "Mg3", val: 0 },
         { label: "Mg4", val: 0 },
       ];
-      let total = 0;
       expenseTransactions.forEach((tx) => {
         const txDate = getValidDate(tx);
         if (
@@ -305,8 +299,6 @@ function App() {
           total += Math.abs(tx.amount);
         }
       });
-      avg = total / currentDayOfMonth;
-      labelAvg = "/hari";
     } else {
       data = [
         { label: "Jan", val: 0 },
@@ -322,7 +314,6 @@ function App() {
         { label: "Nov", val: 0 },
         { label: "Des", val: 0 },
       ];
-      let total = 0;
       expenseTransactions.forEach((tx) => {
         const txDate = getValidDate(tx);
         if (!isNaN(txDate) && txDate.getFullYear() === now.getFullYear()) {
@@ -330,18 +321,12 @@ function App() {
           total += Math.abs(tx.amount);
         }
       });
-      avg = total / currentMonthNumber;
-      labelAvg = "/bulan";
     }
-    return { data, avg, labelAvg };
+    return { data, total };
   };
 
   const [homeChartFilter, setHomeChartFilter] = useState("Mingguan");
-  const {
-    data: homeChartData,
-    avg: homeAverage,
-    labelAvg: homeLabelAvg,
-  } = getHomeChartData();
+  const { data: homeChartData, total: homeTotal } = getHomeChartData();
 
   const filteredExpenseTransactions = transactions.filter((t) => {
     if (t.type !== "expense") return false;
@@ -486,7 +471,6 @@ function App() {
       );
       let allTimeArr = sortedYears.map((y) => ({ label: y, val: allTime[y] }));
 
-      // Jika data hanya 1 tahun, kita gandakan titiknya agar grafik garis tidak error (karena garis butuh minimal 2 titik)
       if (allTimeArr.length === 0)
         allTimeArr = [{ label: new Date().getFullYear().toString(), val: 0 }];
       if (allTimeArr.length === 1) {
@@ -529,10 +513,12 @@ function App() {
         try {
           const base64Data = reader.result.split(",")[1];
           const allowedCats = categories.join(", ");
+
           const prompt = `Kamu adalah sistem akuntansi. Baca struk ini, kembalikan HANYA JSON persis ini:
           {
             "store": "Nama Toko", 
-            "date": "Tanggal struk (format: DD MMM YYYY, HH:mm)", 
+            "date": "Tanggal struk (format: DD MMM YYYY, HH:mm)",
+            "isoDate": "Tanggal struk format standar YYYY-MM-DDTHH:mm:ss",
             "amount": -15000, 
             "category": "Tebak kategori toko", 
             "items": [
@@ -556,8 +542,20 @@ function App() {
             .trim();
           const extractedData = JSON.parse(responseText);
 
+          let txTimestamp = Date.now();
+          if (extractedData.isoDate) {
+            const parsed = new Date(extractedData.isoDate);
+            if (!isNaN(parsed.getTime())) txTimestamp = parsed.getTime();
+          } else if (extractedData.date) {
+            const parsedFallback = new Date(
+              extractedData.date.replace(",", ""),
+            );
+            if (!isNaN(parsedFallback.getTime()))
+              txTimestamp = parsedFallback.getTime();
+          }
+
           const newTransaction = {
-            timestamp: Date.now(),
+            timestamp: txTimestamp,
             type: "expense",
             store: extractedData.store || "Toko",
             date: extractedData.date || "Baru Saja",
@@ -831,8 +829,14 @@ function App() {
     }
   };
 
+  // FUNGSI MEMULAI EDIT (MENGAMBIL DATA UNTUK MODAL)
   const startEditing = () => {
-    setEditData(JSON.parse(JSON.stringify(selectedTransaction)));
+    const dataToEdit = JSON.parse(JSON.stringify(selectedTransaction));
+    // Validasi timestamp lama agar format jam tidak error
+    if (!dataToEdit.timestamp) {
+      dataToEdit.timestamp = getValidDate(dataToEdit).getTime();
+    }
+    setEditData(dataToEdit);
     setIsEditing(true);
   };
 
@@ -1059,7 +1063,7 @@ function App() {
                     </div>
                   </div>
 
-                  {/* MINI LINE CHART BERANDA */}
+                  {/* KARTU STATISTIK BERANDA MENGGUNAKAN TOTAL */}
                   <div className="bg-white/60 border border-white/60 backdrop-blur-xl rounded-[1.5rem] p-5 shadow-sm mt-1">
                     <div className="flex justify-between items-center mb-4">
                       <h3 className="text-base font-bold text-gray-900">
@@ -1078,13 +1082,14 @@ function App() {
 
                     <div className="mb-2">
                       <p className="text-xs font-semibold text-gray-500 mb-0.5">
-                        Rata-rata Pengeluaran
+                        {homeChartFilter === "Mingguan"
+                          ? "Total Minggu Ini"
+                          : homeChartFilter === "Bulanan"
+                            ? "Total Bulan Ini"
+                            : "Total Tahun Ini"}
                       </p>
                       <h4 className="text-xl font-extrabold text-gray-900 truncate flex items-end">
-                        Rp {Math.round(homeAverage).toLocaleString("id-ID")}
-                        <span className="text-xs font-medium text-gray-500 font-normal ml-1 mb-1">
-                          {homeLabelAvg}
-                        </span>
+                        Rp {homeTotal.toLocaleString("id-ID")}
                       </h4>
                     </div>
 
@@ -1141,7 +1146,6 @@ function App() {
                   </div>
                 </div>
 
-                {/* LINE CHART ANALISIS LENGKAP */}
                 <div className="bg-white/70 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 shadow-sm flex flex-col relative pt-8 pb-4">
                   <div className="flex p-1 bg-gray-100/80 rounded-xl mb-4 mx-auto w-full max-w-lg">
                     {["Mingguan", "Bulanan", "Tahunan", "Semua"].map(
@@ -1193,7 +1197,6 @@ function App() {
                   <LineChart data={currentAnalysisChartView} color="#8B5CF6" />
                 </div>
 
-                {/* PIE CHART (DONUT) TETAP ADA */}
                 <div className="bg-white/70 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 md:p-8 shadow-sm">
                   <h3 className="text-lg font-bold text-gray-900 mb-6 text-center">
                     Distribusi Kategori
@@ -1663,24 +1666,59 @@ function App() {
                 )}
               </div>
 
-              <div className="text-center mb-4 mt-2 px-8">
+              {/* FITUR EDIT TANGGAL ADA DI SINI */}
+              <div className="text-center mb-4 mt-2 px-8 flex flex-col items-center">
                 <div
                   className={`w-12 h-12 text-2xl rounded-2xl flex items-center justify-center mx-auto mb-2 ${selectedTransaction.type === "income" ? "bg-green-100" : "bg-gray-100"}`}
                 >
                   {isEditing ? editData.icon : selectedTransaction.icon}
                 </div>
                 {isEditing ? (
-                  <input
-                    type="text"
-                    value={editData.store}
-                    onChange={(e) =>
-                      setEditData({ ...editData, store: e.target.value })
-                    }
-                    className="w-full text-center font-bold text-xl bg-gray-50 border border-gray-200 rounded-xl p-1.5 outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                  <div className="w-full space-y-2">
+                    <input
+                      type="text"
+                      value={editData.store}
+                      onChange={(e) =>
+                        setEditData({ ...editData, store: e.target.value })
+                      }
+                      className="w-full text-center font-bold text-xl bg-gray-50 border border-gray-200 rounded-xl p-1.5 outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+
+                    {/* Input kalender bawaan perangkat */}
+                    <input
+                      type="datetime-local"
+                      value={
+                        editData.timestamp
+                          ? new Date(
+                              editData.timestamp -
+                                new Date().getTimezoneOffset() * 60000,
+                            )
+                              .toISOString()
+                              .slice(0, 16)
+                          : ""
+                      }
+                      onChange={(e) => {
+                        const d = new Date(e.target.value);
+                        setEditData({
+                          ...editData,
+                          timestamp: d.getTime(),
+                          date: d
+                            .toLocaleDateString("id-ID", {
+                              day: "2-digit",
+                              month: "short",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                            .replace(/\./g, ":"),
+                        });
+                      }}
+                      className="w-full text-center text-xs font-semibold text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-1.5 outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
                 ) : (
                   <>
-                    <h3 className="font-bold text-xl text-gray-900 truncate">
+                    <h3 className="font-bold text-xl text-gray-900 truncate w-full">
                       {selectedTransaction.store}
                     </h3>
                     <p className="text-xs text-gray-400 mt-1">
