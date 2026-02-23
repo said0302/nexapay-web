@@ -191,8 +191,6 @@ function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState(null);
-
-  // INI YANG SEBELUMNYA HILANG:
   const [showAboutApp, setShowAboutApp] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -457,7 +455,6 @@ function App() {
     0,
   );
 
-  // LOGIKA KATEGORI CASE-INSENSITIVE (BEBAS HURUF BESAR/KECIL)
   const categoryData = {};
   filteredExpenseTransactions.forEach((tx) => {
     if (tx.items && tx.items.length > 0) {
@@ -666,7 +663,6 @@ function App() {
             txTimestamp =
               new Date(extractedData.isoDate).getTime() || Date.now();
 
-          // PENCOCOKAN KATEGORI AI DENGAN KEBAL HURUF BESAR/KECIL
           let mainCategory = "Lainnya";
           if (extractedData.category) {
             const matchedMainCat = categories.find(
@@ -984,7 +980,7 @@ function App() {
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ type: "spring", delay: 0.2 }}
-            className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-xl mx-auto mb-6 p-4"
+            className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-xl mx-auto mb-6 p-2"
           >
             <img
               src="/logo-192.png"
@@ -1025,7 +1021,6 @@ function App() {
           </motion.button>
         </motion.div>
 
-        {/* --- COPYRIGHT DI HALAMAN LOGIN --- */}
         <div className="absolute bottom-8 w-full text-center z-0">
           <p className="text-xs font-bold text-gray-400 tracking-widest uppercase">
             © 2026 Bale Teknisi
@@ -1632,7 +1627,6 @@ function App() {
               )}
             </AnimatePresence>
 
-            {/* --- COPYRIGHT DI DALAM HALAMAN UTAMA --- */}
             <div className="mt-8 pb-4 text-center w-full relative z-0">
               <p className="text-[10px] font-bold text-gray-400/80 tracking-widest uppercase">
                 © 2026 Bale Teknisi
@@ -1697,7 +1691,6 @@ function App() {
           </nav>
         </div>
 
-        {/* --- MODAL BERANIMASI TENTANG APLIKASI --- */}
         <AnimatePresence>
           {showAboutApp && (
             <motion.div
@@ -1756,7 +1749,6 @@ function App() {
           )}
         </AnimatePresence>
 
-        {/* --- MODAL BERANIMASI (TAMBAH TRANSAKSI) --- */}
         <AnimatePresence>
           {showActionSheet && (
             <motion.div
@@ -1952,6 +1944,7 @@ function App() {
           )}
         </AnimatePresence>
 
+        {/* --- MODAL KONFIRMASI GAMBAR DENGAN ANIMASI SCANNER LASER --- */}
         <AnimatePresence>
           {imagePreview && (
             <motion.div
@@ -1972,27 +1965,61 @@ function App() {
                     Konfirmasi Struk
                   </h3>
                   <button
-                    onClick={() => setImagePreview(null)}
+                    onClick={() => !isProcessing && setImagePreview(null)}
                     className="w-8 h-8 bg-gray-200/50 rounded-full flex items-center justify-center text-gray-600"
+                    disabled={isProcessing}
                   >
                     <X size={20} />
                   </button>
                 </div>
                 <div className="flex-1 overflow-hidden rounded-[1.5rem] bg-gray-100 border border-gray-200/50 relative mb-6 flex justify-center items-center min-h-[300px]">
+                  {/* Gambar Struk (Akan meredup saat di-scan) */}
                   <img
                     src={imagePreview}
-                    className="max-w-full max-h-[50vh] object-contain rounded-[1rem]"
+                    className={`max-w-full max-h-[50vh] object-contain rounded-[1rem] transition-all duration-700 ${isProcessing ? "brightness-50 grayscale-[30%]" : ""}`}
                   />
+
+                  {/* ANIMASI LASER SCANNER */}
+                  {isProcessing && (
+                    <motion.div
+                      initial={{ top: "-10%" }}
+                      animate={{ top: ["-10%", "110%", "-10%"] }}
+                      transition={{
+                        duration: 2.5,
+                        repeat: Infinity,
+                        ease: "linear",
+                      }}
+                      className="absolute left-0 right-0 h-24 bg-gradient-to-b from-transparent via-blue-500/20 to-blue-500/50 border-b-2 border-blue-400 shadow-[0_5px_20px_rgba(59,130,246,0.8)] z-20 pointer-events-none"
+                    />
+                  )}
+
+                  {/* BADGE MELAYANG SAAT SCANNING */}
+                  {isProcessing && (
+                    <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
+                      <motion.div
+                        animate={{
+                          opacity: [0.7, 1, 0.7],
+                          scale: [0.98, 1.02, 0.98],
+                        }}
+                        transition={{ duration: 1.5, repeat: Infinity }}
+                        className="bg-black/70 backdrop-blur-md text-white px-6 py-3 rounded-full font-bold flex items-center gap-3 shadow-2xl border border-white/10"
+                      >
+                        <Sparkles
+                          className="animate-spin text-blue-400"
+                          size={20}
+                        />
+                        Menganalisis Struk...
+                      </motion.div>
+                    </div>
+                  )}
                 </div>
                 <motion.button
-                  whileTap={{ scale: 0.95 }}
+                  whileTap={!isProcessing ? { scale: 0.95 } : {}}
                   onClick={handleProcessAI}
-                  className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl font-bold shadow-lg"
+                  className={`w-full py-4 text-white rounded-2xl font-bold shadow-lg transition-colors ${isProcessing ? "bg-gray-400 cursor-not-allowed" : "bg-gradient-to-r from-blue-600 to-indigo-600"}`}
                   disabled={isProcessing}
                 >
-                  {isProcessing
-                    ? "Menganalisis dengan AI..."
-                    : "Ekstrak Data Sekarang"}
+                  {isProcessing ? "Memproses Data..." : "Ekstrak Data Sekarang"}
                 </motion.button>
               </motion.div>
             </motion.div>
