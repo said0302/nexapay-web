@@ -22,6 +22,7 @@ import {
   CalendarDays,
   Search,
   AlertCircle,
+  Info,
 } from "lucide-react";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
@@ -190,6 +191,9 @@ function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState(null);
+
+  // INI YANG SEBELUMNYA HILANG:
+  const [showAboutApp, setShowAboutApp] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [historySort, setHistorySort] = useState("newest");
@@ -452,19 +456,33 @@ function App() {
     (acc, curr) => acc + Math.abs(curr.amount),
     0,
   );
+
+  // LOGIKA KATEGORI CASE-INSENSITIVE (BEBAS HURUF BESAR/KECIL)
   const categoryData = {};
   filteredExpenseTransactions.forEach((tx) => {
     if (tx.items && tx.items.length > 0) {
       tx.items.forEach((item) => {
-        let cat = categories.includes(item.category)
-          ? item.category
-          : "Lainnya";
+        const matchedCat = categories.find(
+          (c) =>
+            c.toLowerCase() ===
+            String(item.category || "")
+              .trim()
+              .toLowerCase(),
+        );
+        let cat = matchedCat || "Lainnya";
         categoryData[cat] =
           (categoryData[cat] || 0) +
           (Number(item.qty) || 1) * (Number(item.price) || 0);
       });
     } else {
-      let cat = categories.includes(tx.category) ? tx.category : "Lainnya";
+      const matchedCat = categories.find(
+        (c) =>
+          c.toLowerCase() ===
+          String(tx.category || "")
+            .trim()
+            .toLowerCase(),
+      );
+      let cat = matchedCat || "Lainnya";
       categoryData[cat] = (categoryData[cat] || 0) + Math.abs(tx.amount);
     }
   });
@@ -648,6 +666,17 @@ function App() {
             txTimestamp =
               new Date(extractedData.isoDate).getTime() || Date.now();
 
+          // PENCOCOKAN KATEGORI AI DENGAN KEBAL HURUF BESAR/KECIL
+          let mainCategory = "Lainnya";
+          if (extractedData.category) {
+            const matchedMainCat = categories.find(
+              (c) =>
+                c.toLowerCase() ===
+                String(extractedData.category).trim().toLowerCase(),
+            );
+            if (matchedMainCat) mainCategory = matchedMainCat;
+          }
+
           const newTransaction = {
             userId: currentUser.uid,
             timestamp: txTimestamp,
@@ -655,14 +684,21 @@ function App() {
             store: extractedData.store || "Toko",
             date: extractedData.date || "Baru Saja",
             amount: Number(extractedData.amount) || 0,
-            category: "Lainnya",
+            category: mainCategory,
             icon: "✨",
-            items: (extractedData.items || []).map((item) => ({
-              ...item,
-              category: categories.includes(item.category)
-                ? item.category
-                : "Lainnya",
-            })),
+            items: (extractedData.items || []).map((item) => {
+              const matchedCat = categories.find(
+                (c) =>
+                  c.toLowerCase() ===
+                  String(item.category || "")
+                    .trim()
+                    .toLowerCase(),
+              );
+              return {
+                ...item,
+                category: matchedCat || "Lainnya",
+              };
+            }),
           };
 
           const docRef = await addDoc(
@@ -740,11 +776,11 @@ function App() {
 
   const handleAddCategory = async () => {
     if (newCategoryName.trim() === "") return;
-    if (categories.includes(newCategoryName.trim()))
-      return showAlert(
-        "Sudah Ada",
-        `Kategori "${newCategoryName.trim()}" sudah ada!`,
-      );
+    const exists = categories.find(
+      (c) => c.toLowerCase() === newCategoryName.trim().toLowerCase(),
+    );
+    if (exists)
+      return showAlert("Sudah Ada", `Kategori "${exists}" sudah ada!`);
     const updatedCategories = [...categories, newCategoryName.trim()];
     setCategories(updatedCategories);
     setNewCategoryName("");
@@ -942,14 +978,13 @@ function App() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="w-full max-w-md bg-white p-8 rounded-[2.5rem] shadow-2xl text-center"
+          className="w-full max-w-md bg-white p-8 rounded-[2.5rem] shadow-2xl text-center z-10 relative"
         >
           <motion.div
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ type: "spring", delay: 0.2 }}
-            // Tambahkan p-4 agar logo tidak terlalu mentok ke pinggir kotak
-            className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-xl mx-auto mb-6 p-2"
+            className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-xl mx-auto mb-6 p-4"
           >
             <img
               src="/logo-192.png"
@@ -989,11 +1024,17 @@ function App() {
             <span className="font-bold">Masuk dengan Google</span>
           </motion.button>
         </motion.div>
+
+        {/* --- COPYRIGHT DI HALAMAN LOGIN --- */}
+        <div className="absolute bottom-8 w-full text-center z-0">
+          <p className="text-xs font-bold text-gray-400 tracking-widest uppercase">
+            © 2026 Bale Teknisi
+          </p>
+        </div>
       </div>
     );
   }
 
-  // --- VARIAN ANIMASI PINDAH TAB MENU ---
   const tabVariants = {
     hidden: { opacity: 0, x: 20 },
     enter: { opacity: 1, x: 0, transition: { duration: 0.3, ease: "easeOut" } },
@@ -1139,7 +1180,7 @@ function App() {
             />
           </header>
 
-          <div className="flex-1 overflow-y-auto px-6 md:px-10 pb-32 md:pb-10 no-scrollbar z-10 overflow-x-hidden">
+          <div className="flex-1 overflow-y-auto px-6 md:px-10 pb-32 md:pb-10 no-scrollbar z-10 overflow-x-hidden relative">
             <AnimatePresence mode="wait">
               {/* --- KONTEN BERANDA --- */}
               {activeMenu === "home" && (
@@ -1555,6 +1596,23 @@ function App() {
                       </div>
                       <ChevronRight size={18} className="text-gray-400" />
                     </motion.button>
+
+                    <motion.button
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => setShowAboutApp(true)}
+                      className="w-full flex items-center justify-between p-4 hover:bg-white/80 rounded-2xl transition-colors text-left"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="p-2 bg-indigo-100 text-indigo-600 rounded-xl">
+                          <Info size={20} />
+                        </div>
+                        <span className="font-semibold text-gray-800">
+                          Tentang Aplikasi
+                        </span>
+                      </div>
+                      <ChevronRight size={18} className="text-gray-400" />
+                    </motion.button>
+
                     <motion.button
                       whileTap={{ scale: 0.98 }}
                       onClick={handleLogout}
@@ -1573,6 +1631,13 @@ function App() {
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {/* --- COPYRIGHT DI DALAM HALAMAN UTAMA --- */}
+            <div className="mt-8 pb-4 text-center w-full relative z-0">
+              <p className="text-[10px] font-bold text-gray-400/80 tracking-widest uppercase">
+                © 2026 Bale Teknisi
+              </p>
+            </div>
           </div>
         </main>
 
@@ -1632,7 +1697,66 @@ function App() {
           </nav>
         </div>
 
-        {/* --- MODAL BERANIMASI --- */}
+        {/* --- MODAL BERANIMASI TENTANG APLIKASI --- */}
+        <AnimatePresence>
+          {showAboutApp && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-50 flex items-center justify-center p-4 md:p-8 bg-black/60 backdrop-blur-md"
+            >
+              <div
+                className="absolute inset-0"
+                onClick={() => setShowAboutApp(false)}
+              ></div>
+              <motion.div
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                className="w-full max-w-sm bg-white/95 backdrop-blur-3xl border border-white/50 rounded-[2.5rem] p-8 shadow-2xl relative text-center"
+              >
+                <div className="w-24 h-24 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-[2rem] flex items-center justify-center text-white shadow-xl mx-auto mb-5 p-3">
+                  <img
+                    src="/logo-192.png"
+                    alt="Logo NexaPay"
+                    className="w-full h-full object-contain drop-shadow-sm"
+                  />
+                </div>
+                <h3 className="text-2xl font-black text-gray-900 mb-1 tracking-tight">
+                  NexaPay.
+                </h3>
+                <p className="text-sm font-bold text-blue-500 mb-6">
+                  Versi 1.0.0
+                </p>
+                <div className="bg-gray-50 rounded-2xl p-5 mb-8 border border-gray-100 text-sm text-gray-600 leading-relaxed text-left shadow-inner">
+                  <p>
+                    <strong>NexaPay</strong> adalah asisten keuangan pribadi
+                    yang ditenagai oleh kecerdasan buatan (Gemini AI).
+                  </p>
+                  <p className="mt-2">
+                    Dikembangkan dengan antarmuka bergaya modern untuk
+                    pengalaman mencatat transaksi yang otomatis, cepat, dan
+                    cerdas.
+                  </p>
+                  <p className="mt-3 text-xs text-center text-gray-400 font-semibold uppercase tracking-wider">
+                    © 2026 Bale Teknisi
+                  </p>
+                </div>
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setShowAboutApp(false)}
+                  className="w-full py-4 bg-gray-900 text-white font-bold rounded-2xl shadow-lg hover:bg-gray-800 transition-colors"
+                >
+                  Tutup Informasi
+                </motion.button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* --- MODAL BERANIMASI (TAMBAH TRANSAKSI) --- */}
         <AnimatePresence>
           {showActionSheet && (
             <motion.div
