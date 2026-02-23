@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
-  ScanLine,
   Home,
   PieChart,
   History,
@@ -949,9 +948,14 @@ function App() {
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ type: "spring", delay: 0.2 }}
-            className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-xl mx-auto mb-6"
+            // Tambahkan p-4 agar logo tidak terlalu mentok ke pinggir kotak
+            className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-xl mx-auto mb-6 p-2"
           >
-            <ScanLine size={40} />
+            <img
+              src="/logo-192.png"
+              alt="Logo NexaPay"
+              className="w-full h-full object-contain drop-shadow-sm"
+            />
           </motion.div>
           <h1 className="text-3xl font-extrabold text-gray-900 mb-2">
             NexaPay.
@@ -1067,8 +1071,12 @@ function App() {
       <div className="w-full h-screen md:h-[90vh] md:max-w-6xl md:bg-white/40 md:backdrop-blur-3xl md:border md:border-white/60 md:rounded-[3rem] md:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.15)] flex flex-col md:flex-row overflow-hidden relative transition-all duration-500 z-10">
         <aside className="hidden md:flex flex-col w-72 bg-white/30 border-r border-white/50 p-8 z-10 backdrop-blur-xl">
           <div className="flex items-center gap-3 mb-12">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg">
-              <ScanLine size={24} />
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg p-1.5">
+              <img
+                src="/logo-192.png"
+                alt="Logo NexaPay"
+                className="w-full h-full object-contain"
+              />
             </div>
             <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
               NexaPay.
