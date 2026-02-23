@@ -19,7 +19,7 @@ export default defineConfig({
         display: "standalone", // Ini yang bikin layarnya full screen!
         icons: [
           {
-            src: "/logo-192.png",
+            src: "/logo-19.png",
             sizes: "192x192",
             type: "image/png",
           },
