@@ -356,7 +356,20 @@ function App() {
     .reduce((acc, curr) => acc + Math.abs(curr.amount), 0);
   const currentBalance = totalIncome - totalExpense;
 
+  // =========================================================================
+  // LOGIKA BARU: HITUNG BATAS AWAL & AKHIR MINGGU INI (SENIN - MINGGU)
+  // =========================================================================
   const now = new Date();
+  const currentDay = now.getDay() === 0 ? 7 : now.getDay(); // Ubah Minggu jadi 7
+
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - currentDay + 1); // Geser mundur ke Senin
+  startOfWeek.setHours(0, 0, 0, 0); // Nol-kan jam (Senin jam 00:00:00)
+
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6); // Geser maju ke Minggu
+  endOfWeek.setHours(23, 59, 59, 999); // Set jam mentok (Minggu jam 23:59:59)
+
   const expenseTransactions = transactions.filter((t) => t.type === "expense");
 
   const getHomeChartData = () => {
@@ -374,11 +387,8 @@ function App() {
       ];
       expenseTransactions.forEach((tx) => {
         const txDate = getValidDate(tx);
-        const diffTime = Math.abs(now - txDate);
-        if (
-          Math.ceil(diffTime / (1000 * 60 * 60 * 24)) <= 7 &&
-          !isNaN(txDate)
-        ) {
+        // Filter agar HANYA masuk jika berada di rentang kalender Senin-Minggu ini
+        if (!isNaN(txDate) && txDate >= startOfWeek && txDate <= endOfWeek) {
           let dayIdx = txDate.getDay() - 1;
           if (dayIdx === -1) dayIdx = 6;
           data[dayIdx].val += Math.abs(tx.amount);
@@ -437,8 +447,10 @@ function App() {
     if (t.type !== "expense") return false;
     const txDate = getValidDate(t);
     if (isNaN(txDate)) return false;
+
+    // Filter juga menggunakan rentang kalender Senin-Minggu ini
     if (chartFilter === "Mingguan")
-      return Math.ceil(Math.abs(now - txDate) / (1000 * 60 * 60 * 24)) <= 7;
+      return txDate >= startOfWeek && txDate <= endOfWeek;
     else if (chartFilter === "Bulanan")
       return (
         txDate.getFullYear() === selectedYear &&
@@ -1304,7 +1316,7 @@ function App() {
                         <CalendarDays size={16} />
                         <p className="text-xs md:text-sm font-medium uppercase tracking-wider">
                           {chartFilter === "Mingguan"
-                            ? "7 Hari Terakhir"
+                            ? "Minggu Ini"
                             : chartFilter === "Bulanan"
                               ? `${monthNames[selectedMonth]} ${selectedYear}`
                               : chartFilter === "Tahunan"
@@ -1944,7 +1956,6 @@ function App() {
           )}
         </AnimatePresence>
 
-        {/* --- MODAL KONFIRMASI GAMBAR DENGAN ANIMASI SCANNER LASER --- */}
         <AnimatePresence>
           {imagePreview && (
             <motion.div
@@ -1973,13 +1984,11 @@ function App() {
                   </button>
                 </div>
                 <div className="flex-1 overflow-hidden rounded-[1.5rem] bg-gray-100 border border-gray-200/50 relative mb-6 flex justify-center items-center min-h-[300px]">
-                  {/* Gambar Struk (Akan meredup saat di-scan) */}
                   <img
                     src={imagePreview}
                     className={`max-w-full max-h-[50vh] object-contain rounded-[1rem] transition-all duration-700 ${isProcessing ? "brightness-50 grayscale-[30%]" : ""}`}
                   />
 
-                  {/* ANIMASI LASER SCANNER */}
                   {isProcessing && (
                     <motion.div
                       initial={{ top: "-10%" }}
@@ -1993,7 +2002,6 @@ function App() {
                     />
                   )}
 
-                  {/* BADGE MELAYANG SAAT SCANNING */}
                   {isProcessing && (
                     <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
                       <motion.div
