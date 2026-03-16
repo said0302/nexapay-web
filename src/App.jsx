@@ -162,6 +162,7 @@ const LineChart = ({ data, color = "#3B82F6" }) => {
           </div>
         </motion.div>
       ))}
+      {/* TAMPILAN LABEL DI BAWAH GRAFIK */}
       {points.map((p, i) => (
         <div
           key={`label-${i}`}
@@ -184,8 +185,7 @@ function App() {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
 
-  // --- STATE BARU UNTUK FILTER ANALISIS ---
-  const [analysisWeek, setAnalysisWeek] = useState(1); // 1, 2, 3, 4
+  // STATE RENTANG TANGGAL KUSTOM
   const [customDateRange, setCustomDateRange] = useState({
     start: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
       .toISOString()
@@ -366,7 +366,7 @@ function App() {
     .reduce((acc, curr) => acc + Math.abs(curr.amount), 0);
   const currentBalance = totalIncome - totalExpense;
 
-  // --- LOGIKA MINGGUAN UNTUK MENU BERANDA (TETAP CURRENT WEEK: SENIN-MINGGU) ---
+  // --- LOGIKA MINGGUAN (SENIN-MINGGU) SAAT INI ---
   const now = new Date();
   const currentDay = now.getDay() === 0 ? 7 : now.getDay();
   const startOfWeek = new Date(now);
@@ -448,36 +448,16 @@ function App() {
   const [homeChartFilter, setHomeChartFilter] = useState("Mingguan");
   const { data: homeChartData, total: homeTotal } = getHomeChartData();
 
-  // --- LOGIKA FILTER UNTUK HALAMAN ANALISIS ---
+  // =========================================================================
+  // LOGIKA BARU: FILTER TRANSAKSI HALAMAN ANALISIS YANG LEBIH PROFESIONAL
+  // =========================================================================
   const filteredExpenseTransactions = transactions.filter((t) => {
     if (t.type !== "expense") return false;
     const txDate = getValidDate(t);
     if (isNaN(txDate)) return false;
 
     if (chartFilter === "Mingguan") {
-      let startDay = 1,
-        endDay = 7;
-      if (analysisWeek === 2) {
-        startDay = 8;
-        endDay = 14;
-      } else if (analysisWeek === 3) {
-        startDay = 15;
-        endDay = 21;
-      } else if (analysisWeek === 4) {
-        startDay = 22;
-        endDay = new Date(selectedYear, selectedMonth + 1, 0).getDate();
-      }
-      const startD = new Date(selectedYear, selectedMonth, startDay);
-      const endD = new Date(
-        selectedYear,
-        selectedMonth,
-        endDay,
-        23,
-        59,
-        59,
-        999,
-      );
-      return txDate >= startD && txDate <= endD;
+      return txDate >= startOfWeek && txDate <= endOfWeek;
     } else if (chartFilter === "Bulanan") {
       return (
         txDate.getFullYear() === selectedYear &&
@@ -561,120 +541,123 @@ function App() {
       ? { background: `conic-gradient(${pieGradientStops})` }
       : { background: "#E2E8F0" };
 
+  // --- RENDER GRAFIK ANALISIS YANG LEBIH CERDAS ---
   const generateAnalysisChartData = () => {
+    // 1. MINGGUAN: Tampilkan Sen - Min
     if (chartFilter === "Mingguan") {
-      let startDay = 1,
-        endDay = 7;
-      if (analysisWeek === 2) {
-        startDay = 8;
-        endDay = 14;
-      } else if (analysisWeek === 3) {
-        startDay = 15;
-        endDay = 21;
-      } else if (analysisWeek === 4) {
-        startDay = 22;
-        endDay = new Date(selectedYear, selectedMonth + 1, 0).getDate();
-      }
-
-      let weekData = [];
-      for (let i = startDay; i <= endDay; i++) {
-        weekData.push({
-          label: `${i} ${monthNames[selectedMonth].slice(0, 3)}`,
-          val: 0,
-          dateNum: i,
-        });
-      }
+      let data = [
+        { label: "Sen", val: 0 },
+        { label: "Sel", val: 0 },
+        { label: "Rab", val: 0 },
+        { label: "Kam", val: 0 },
+        { label: "Jum", val: 0 },
+        { label: "Sab", val: 0 },
+        { label: "Min", val: 0 },
+      ];
       filteredExpenseTransactions.forEach((tx) => {
-        const d = getValidDate(tx).getDate();
-        const target = weekData.find((w) => w.dateNum === d);
-        if (target) target.val += Math.abs(tx.amount);
+        const txDate = getValidDate(tx);
+        let dayIdx = txDate.getDay() - 1;
+        if (dayIdx === -1) dayIdx = 6;
+        data[dayIdx].val += Math.abs(tx.amount);
       });
-      return weekData;
+      return data;
     }
 
-    if (chartFilter === "Kustom") {
-      let cMap = {};
+    // 2. BULANAN: Tampilkan Mg 1 sampai Mg 5
+    if (chartFilter === "Bulanan") {
+      let data = [
+        { label: "Mg 1", val: 0 },
+        { label: "Mg 2", val: 0 },
+        { label: "Mg 3", val: 0 },
+        { label: "Mg 4", val: 0 },
+        { label: "Mg 5", val: 0 },
+      ];
       filteredExpenseTransactions.forEach((tx) => {
-        const d = getValidDate(tx);
-        const lbl = `${d.getDate()} ${monthNames[d.getMonth()].slice(0, 3)}`;
-        cMap[lbl] = (cMap[lbl] || 0) + Math.abs(tx.amount);
+        const date = getValidDate(tx).getDate();
+        if (date <= 7) data[0].val += Math.abs(tx.amount);
+        else if (date <= 14) data[1].val += Math.abs(tx.amount);
+        else if (date <= 21) data[2].val += Math.abs(tx.amount);
+        else if (date <= 28) data[3].val += Math.abs(tx.amount);
+        else data[4].val += Math.abs(tx.amount);
       });
-      let cData = [];
+      // Bersihkan Mg 5 jika kosong agar grafik lebih rapi
+      if (data[4].val === 0) data.pop();
+      return data;
+    }
+
+    // 3. TAHUNAN: Tampilkan Jan - Des
+    if (chartFilter === "Tahunan") {
+      let data = monthNames.map((m) => ({ label: m.slice(0, 3), val: 0 }));
+      filteredExpenseTransactions.forEach((tx) => {
+        data[getValidDate(tx).getMonth()].val += Math.abs(tx.amount);
+      });
+      return data;
+    }
+
+    // 4. KUSTOM: Tampilkan dinamis (Harian jika <= 31 hari, Bulanan jika > 31 Hari)
+    if (chartFilter === "Kustom") {
       const sDate = new Date(customDateRange.start + "T00:00:00");
       const eDate = new Date(customDateRange.end + "T23:59:59");
+      const diffDays = Math.ceil(
+        Math.abs(eDate - sDate) / (1000 * 60 * 60 * 24),
+      );
 
-      const diffTime = Math.abs(eDate - sDate);
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-      if (diffDays > 31) {
-        let mMap = {};
-        filteredExpenseTransactions.forEach((tx) => {
-          const d = getValidDate(tx);
-          const lbl = `${monthNames[d.getMonth()].slice(0, 3)} ${d.getFullYear().toString().slice(-2)}`;
-          mMap[lbl] = (mMap[lbl] || 0) + Math.abs(tx.amount);
-        });
-        Object.keys(mMap).forEach((k) =>
-          cData.push({ label: k, val: mMap[k] }),
-        );
-        return cData.length > 0 ? cData : [{ label: "-", val: 0 }];
-      } else {
+      let dataMap = {};
+      if (diffDays <= 31) {
+        // Render Harian
         for (let d = new Date(sDate); d <= eDate; d.setDate(d.getDate() + 1)) {
-          const lbl = `${d.getDate()} ${monthNames[d.getMonth()].slice(0, 3)}`;
-          cData.push({ label: lbl, val: cMap[lbl] || 0 });
+          dataMap[
+            d.toLocaleDateString("id-ID", { day: "numeric", month: "short" })
+          ] = 0;
         }
-        return cData.length > 0 ? cData : [{ label: "-", val: 0 }];
+        filteredExpenseTransactions.forEach((tx) => {
+          const dStr = getValidDate(tx).toLocaleDateString("id-ID", {
+            day: "numeric",
+            month: "short",
+          });
+          if (dataMap[dStr] !== undefined) dataMap[dStr] += Math.abs(tx.amount);
+        });
+      } else {
+        // Render Bulanan (karena rentangnya panjang)
+        filteredExpenseTransactions.forEach((tx) => {
+          const mStr = getValidDate(tx).toLocaleDateString("id-ID", {
+            month: "short",
+            year: "2-digit",
+          });
+          dataMap[mStr] = (dataMap[mStr] || 0) + Math.abs(tx.amount);
+        });
       }
+
+      let arr = Object.keys(dataMap).map((k) => ({
+        label: k,
+        val: dataMap[k],
+      }));
+      // Mengatasi error grafik jika data kurang dari 2 titik
+      if (arr.length === 1) return [{ label: "-", val: 0 }, ...arr];
+      if (arr.length === 0) return [{ label: "-", val: 0 }];
+      return arr;
     }
 
-    let monthly = [
-      { label: "Mg 1", val: 0 },
-      { label: "Mg 2", val: 0 },
-      { label: "Mg 3", val: 0 },
-      { label: "Mg 4", val: 0 },
-    ];
-    let yearly = [
-      { label: "Jan", val: 0 },
-      { label: "Feb", val: 0 },
-      { label: "Mar", val: 0 },
-      { label: "Apr", val: 0 },
-      { label: "Mei", val: 0 },
-      { label: "Jun", val: 0 },
-      { label: "Jul", val: 0 },
-      { label: "Ags", val: 0 },
-      { label: "Sep", val: 0 },
-      { label: "Okt", val: 0 },
-      { label: "Nov", val: 0 },
-      { label: "Des", val: 0 },
-    ];
-    let allTime = {};
-
-    filteredExpenseTransactions.forEach((tx) => {
-      const txDate = getValidDate(tx);
-      if (chartFilter === "Bulanan")
-        monthly[Math.min(Math.floor((txDate.getDate() - 1) / 7), 3)].val +=
-          Math.abs(tx.amount);
-      else if (chartFilter === "Tahunan")
-        yearly[txDate.getMonth()].val += Math.abs(tx.amount);
-      else if (chartFilter === "Semua")
-        allTime[txDate.getFullYear().toString()] =
-          (allTime[txDate.getFullYear().toString()] || 0) + Math.abs(tx.amount);
-    });
-
-    if (chartFilter === "Bulanan") return monthly;
-    if (chartFilter === "Tahunan") return yearly;
+    // 5. SEMUA WAKTU: Tampilkan per Tahun
     if (chartFilter === "Semua") {
-      let allTimeArr = Object.keys(allTime)
-        .sort((a, b) => Number(a) - Number(b))
-        .map((y) => ({ label: y, val: allTime[y] }));
-      if (allTimeArr.length === 0)
-        allTimeArr = [{ label: new Date().getFullYear().toString(), val: 0 }];
-      if (allTimeArr.length === 1)
-        allTimeArr = [
-          { label: (Number(allTimeArr[0].label) - 1).toString(), val: 0 },
-          ...allTimeArr,
+      let dataMap = {};
+      filteredExpenseTransactions.forEach((tx) => {
+        const yStr = getValidDate(tx).getFullYear().toString();
+        dataMap[yStr] = (dataMap[yStr] || 0) + Math.abs(tx.amount);
+      });
+      let arr = Object.keys(dataMap)
+        .sort()
+        .map((k) => ({ label: k, val: dataMap[k] }));
+      if (arr.length === 0)
+        return [{ label: new Date().getFullYear().toString(), val: 0 }];
+      if (arr.length === 1)
+        return [
+          { label: (Number(arr[0].label) - 1).toString(), val: 0 },
+          ...arr,
         ];
-      return allTimeArr;
+      return arr;
     }
+    return [];
   };
   const currentAnalysisChartView = generateAnalysisChartData();
 
@@ -1392,13 +1375,13 @@ function App() {
                         <CalendarDays size={16} />
                         <p className="text-xs md:text-sm font-medium uppercase tracking-wider">
                           {chartFilter === "Mingguan"
-                            ? `Minggu ke-${analysisWeek} (${monthNames[selectedMonth]} ${selectedYear})`
+                            ? "Minggu Ini"
                             : chartFilter === "Bulanan"
                               ? `${monthNames[selectedMonth]} ${selectedYear}`
                               : chartFilter === "Tahunan"
                                 ? `Tahun ${selectedYear}`
                                 : chartFilter === "Kustom"
-                                  ? "Rentang Kustom"
+                                  ? `${new Date(customDateRange.start).toLocaleDateString("id-ID", { day: "numeric", month: "short" })} - ${new Date(customDateRange.end).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}`
                                   : "Seluruh Waktu"}
                         </p>
                       </div>
@@ -1411,7 +1394,6 @@ function App() {
                     </div>
                   </motion.div>
                   <div className="bg-white/70 border border-white/60 backdrop-blur-xl rounded-[2.5rem] p-6 shadow-sm flex flex-col relative pt-8 pb-4">
-                    {/* --- TAB FILTER BARU --- */}
                     <div className="flex overflow-x-auto no-scrollbar p-1 bg-gray-100/80 rounded-xl mb-4 mx-auto w-full max-w-lg">
                       {[
                         "Mingguan",
@@ -1431,8 +1413,7 @@ function App() {
                       ))}
                     </div>
 
-                    {/* --- PILIHAN TANGGAL / MINGGU --- */}
-                    {chartFilter !== "Semua" && (
+                    {chartFilter !== "Semua" && chartFilter !== "Mingguan" && (
                       <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
@@ -1466,22 +1447,7 @@ function App() {
                           </div>
                         ) : (
                           <>
-                            {chartFilter === "Mingguan" && (
-                              <select
-                                value={analysisWeek}
-                                onChange={(e) =>
-                                  setAnalysisWeek(Number(e.target.value))
-                                }
-                                className="p-2 px-3 bg-white border border-gray-200 rounded-lg text-sm font-bold text-gray-700 outline-none shadow-sm cursor-pointer hover:bg-gray-50"
-                              >
-                                <option value={1}>Minggu 1 (1-7)</option>
-                                <option value={2}>Minggu 2 (8-14)</option>
-                                <option value={3}>Minggu 3 (15-21)</option>
-                                <option value={4}>Minggu 4 (22+)</option>
-                              </select>
-                            )}
-                            {(chartFilter === "Mingguan" ||
-                              chartFilter === "Bulanan") && (
+                            {chartFilter === "Bulanan" && (
                               <select
                                 value={selectedMonth}
                                 onChange={(e) =>
